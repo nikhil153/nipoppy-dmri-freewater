@@ -1,49 +1,23 @@
 #!/bin/bash
 
+# input naming conventions
 SUBJ=$1
 SESS=$2
-VERS=$3
 
-INPDWI=$4
-INPBVAL=$5
-INPBVEC=$6
+# input file names
+INPDWIS=$3
+INPBVAL=$4
+INPBVEC=$5
 
-# inputs
-#SUBJ=141135
-#SESS=BL
-#VERS=2.4.2
+# input / output paths
+OUTPATH=$6
 
-# fixed paths
-# DATADIR=/lustre06/project/6061841/bcmcpher/fw-dti
-#DATADIR=/data/origami/nikhil/datasets/sandbox/qpn
-#OUTSDIR=/data/origami/bcmcpher/fwdti/results
-DATADIR=/data/pd/ppmi-new
-OUTSDIR=/data/pd/scratch
-OUTVERS=0.9.0
-
-# build derivative input directory path
-TFDIR=$DATADIR/derivatives/tractoflow/v$VERS/output/ses-$SESS/sub-$SUBJ
-
-# # build input file paths
-# INPDWI=$TFDIR/Resample_DWI/sub-${SUBJ}__dwi_resampled.nii.gz
-
-# # grab bval / bvec from either folder
-# if [ -d $TFDIR/Eddy_Topup ]; then
-# 	INPBVAL=$TFDIR/Eddy_Topup/sub-${SUBJ}__bval_eddy
-# 	INPBVEC=$TFDIR/Eddy_Topup/sub-${SUBJ}__dwi_eddy_corrected.bvec
-# 	echo "Found bval / bvec data."
-# elif [ -d $TFDIR/Eddy ]; then
-# 	INPBVAL=$TFDIR/Eddy/sub-${SUBJ}__bval_eddy
-# 	INPBVEC=$TFDIR/Eddy/sub-${SUBJ}__dwi_eddy_corrected.bvec
-# 	echo "Found bval / bvec data."
-# else
-# 	echo "No valid bval / bvec files found."
-# 	exit 1
-# fi
+# tag a version of this pipeline
+OUTVERS=1.0.0
 
 # output directory
-OUTDPY=$OUTSDIR/fwdti/$OUTVERS/ses-$SESS/sub-$SUBJ/dipy
-OUTSPY=$OUTSDIR/fwdti/$OUTVERS/ses-$SESS/sub-$SUBJ/scilpy
+OUTDPY=$OUTPATH/fwdti/$OUTVERS/sub-$SUBJ/ses-$SESS/dipy
+OUTSPY=$OUTPATH/fwdti/$OUTVERS/sub-$SUBJ/ses-$SESS/scilpy
 
 # create output directories
 mkdir -p $OUTDPY
@@ -54,10 +28,10 @@ DPYNAM=$OUTDPY/sub-${SUBJ}_ses-${SESS}
 SPYNAM=$OUTSPY/sub-${SUBJ}_ses-${SESS}_model-fwdti
 
 # run dipy to create mask, regular tensor and fwdti (if supported by the data)
-python /data/origami/bcmcpher/fwdti/bin/fit_fw_dipy.py --dwi_data $INPDWI --dwi_bval $INPBVAL --dwi_bvec $INPBVEC --output_stem $DPYNAM
+python /fwdti/fit_fw_dipy.py --dwi_data $INPDWIS --dwi_bval $INPBVAL --dwi_bvec $INPBVEC --output_stem $DPYNAM
 
 # run the amico fw model through scilpy
-scil_compute_freewater.py $INPDWI $INPBVAL $INPBVEC --out_dir $OUTSPY -f
+scil_compute_freewater.py $INPDWIS $INPBVAL $INPBVEC --out_dir $OUTSPY -f
 
 # rename scilpy outputs
 mv $OUTSPY/dwi_fw_corrected.nii.gz ${SPYNAM}_desc-fwcorr_dwi.nii.gz
@@ -72,7 +46,7 @@ cp $INPBVEC ${SPYNAM}_desc-fwcorr_dwi.bvec
 
 # create the fw tensor metric parameter map files
 scil_compute_dti_metrics.py ${SPYNAM}_desc-fwcorr_dwi.nii.gz $INPBVAL $INPBVEC \
-                                                        --mask ${DPYNAM}_desc-brain_mask.nii.gz \
+							--mask ${DPYNAM}_desc-brain_mask.nii.gz \
 							--tensor ${SPYNAM}_param-tensor_map.nii.gz \
 							--evals ${SPYNAM}_param-evals_map.nii.gz \
 							--evecs ${SPYNAM}_param-evecs_map.nii.gz \
@@ -98,6 +72,3 @@ mv ${SPYNAM}_param-evecs_map_v2.nii.gz ${SPYNAM}_param-evec2_map.nii.gz
 mv ${SPYNAM}_param-evecs_map_v3.nii.gz ${SPYNAM}_param-evec3_map.nii.gz
 mv ${SPYNAM}_param-pulsation_map_std_dwi.nii.gz ${SPYNAM}_desc-dwi_pulsationSTD_map.nii.gz
 mv ${SPYNAM}_param-pulsation_map_std_b0.nii.gz ${SPYNAM}_desc-b0_pulsationSTD_map.nii.gz
-
-# clean out the *.npy files and the .png plot?
-# rm $OUTSPY/*.npy $OUTSPY/*.png

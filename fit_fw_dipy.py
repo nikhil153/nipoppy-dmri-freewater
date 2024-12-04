@@ -86,8 +86,6 @@ def dipyEstimateResidualNRMSE(data, gtab, mask, dipyModel):
     # set nan to 0
     nrmse[np.isnan(nrmse)] = 0
 
-    # _saveNifti(res, affine, file_stem)
-    # _saveNifti(res, affine, file_stem)
     return(res, nrmse)
 
 
@@ -148,11 +146,6 @@ dwi_bval = args.dwi_bval
 dwi_bvec = args.dwi_bvec
 output_stem = args.output_stem
 
-# # test data override
-# dwi_path = "test-dwi.nii.gz"
-# dwi_bval = "test-dwi.bval"
-# dwi_bvec = "test-dwi.bvec"
-
 # what sanity checks are needed here?
 
 #
@@ -177,13 +170,12 @@ _, mask = median_otsu(data, median_radius=5, numpass=5,
 # write the mask to disk for reuse
 mout = nib.nifti1.Nifti1Image(mask.astype("int16"), affine)
 nib.save(mout, f"{output_stem}_desc-brain_mask.nii.gz")
-# _saveNifti(mask, affine, f"{output_stem}_desc-brain_mask.nii.gz")
 
 print(" -- Estimating Signal Plausibility and Pulsation...")
 # estimate some basic signal properties of the input data
 _ = dpEstimatePulsationImplausible(data, gtab, affine, f"{output_stem}_")
 
-# regular tensor for comparison
+# fit regular tensor for comparison
 print(" -- Fitting diffusion tensor model and estimating parameter maps...")
 
 # initialize the regular tensor model
