@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# add default usage for container check
+if [ "$#" -ne 6 ]; then
+	echo "Usage: $0 <subject> <session> <dwi_file> <bval> <bvec> <output_dir>"
+	exit 1
+fi
+
 # input naming conventions
 SUBJ=$1
 SESS=$2
