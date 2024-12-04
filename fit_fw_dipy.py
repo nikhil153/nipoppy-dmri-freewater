@@ -100,7 +100,7 @@ def dpEstimatePulsationImplausible(data, gtab, affine, output_stem):
 
     # non-physical / physically implausible signal
     pis = np.max(ab0 < dwi, axis=-1)
-    _saveNifti(pis.astype("int16"), affine, f"{output_stem}param-nonphysical_map.nii.gz")
+    _saveNifti(pis.astype("int16"), affine, f"{output_stem}desc-dwi_param-nonphysical_mask.nii.gz")
 
     # pulstation - dwi
     dwisd = np.std(data[..., ~gtab.b0s_mask], axis=-1)
