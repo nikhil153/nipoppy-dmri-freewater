@@ -34,7 +34,7 @@ DPYNAM=$OUTDPY/sub-${SUBJ}_ses-${SESS}
 SPYNAM=$OUTSPY/sub-${SUBJ}_ses-${SESS}_model-fwdti
 
 # run dipy to create mask, regular tensor and fwdti (if supported by the data)
-python /fwdti/fit_fw_dipy.py --dwi_data $INPDWIS --dwi_bval $INPBVAL --dwi_bvec $INPBVEC --output_stem $DPYNAM
+python /opt/fwdti/fit_fw_dipy.py --dwi_data $INPDWIS --dwi_bval $INPBVAL --dwi_bvec $INPBVEC --output_stem $DPYNAM
 
 # run the amico fw model through scilpy
 scil_compute_freewater.py $INPDWIS $INPBVAL $INPBVEC --out_dir $OUTSPY -f
