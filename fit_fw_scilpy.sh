@@ -22,16 +22,16 @@ OUTPATH=$6
 OUTVERS=1.0.0
 
 # output directory
-OUTDPY=$OUTPATH/fwdti/$OUTVERS/sub-$SUBJ/ses-$SESS/dipy
-OUTSPY=$OUTPATH/fwdti/$OUTVERS/sub-$SUBJ/ses-$SESS/scilpy
+OUTDPY=$OUTPATH/fwdti/$OUTVERS/sub-$SUBJ/$SESS/dipy
+OUTSPY=$OUTPATH/fwdti/$OUTVERS/sub-$SUBJ/$SESS/scilpy
 
 # create output directories
 mkdir -p $OUTDPY
 mkdir -p $OUTSPY
 
 # output file stems
-DPYNAM=$OUTDPY/sub-${SUBJ}_ses-${SESS}
-SPYNAM=$OUTSPY/sub-${SUBJ}_ses-${SESS}_model-fwdti
+DPYNAM=$OUTDPY/sub-${SUBJ}_${SESS}
+SPYNAM=$OUTSPY/sub-${SUBJ}_${SESS}_model-fwdti
 
 # run dipy to create mask, regular tensor and fwdti (if supported by the data)
 python /opt/fwdti/fit_fw_dipy.py --dwi_data $INPDWIS --dwi_bval $INPBVAL --dwi_bvec $INPBVEC --output_stem $DPYNAM
