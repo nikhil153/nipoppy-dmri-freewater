@@ -1,7 +1,7 @@
 {
-	"name": "fwDTI",
-	"description": "fwDTI",
-	"tool-version": "0.1.0",
+	"name": "dMRI-freewater",
+  "description": "Estimate a regular diffusion tensor model (DTI) and up to 2 freewater corrected diffusion models (fwDTI) with equivalent parameter and residual maps",
+	"tool-version": "1.0.0",
 	"schema-version": "0.5",
 	"command-line": "[[NIPOPPY_CONTAINER_COMMAND]] [[NIPOPPY_FPATH_CONTAINER]] [PARTICIPANT_LABEL] [SESSION_LABEL] [DWI_FILE] [DWI_BVAL] [DWI_BVEC] [OUTPUT_DIR]",
   "inputs": [
@@ -59,15 +59,5 @@
 	"cpu-cores": 4,
 	"ram": 16,
 	"walltime-estimate": 120
-  },
-  "custom": {
-	"nipoppy": {
-	  "CONTAINER_CONFIG": {
-		"ARGS": [
-		  "--bind",
-		  "[[NIPOPPY_DPATH_DERIVATIVES]]/freesurfer/6.0.1/output/[[NIPOPPY_BIDS_SESSION_ID]]"
-		]
-	  }
-	}
   }
 }

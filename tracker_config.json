@@ -1,4 +1,6 @@
 {
-  "PATHS": [	"[[NIPOPPY_BIDS_PARTICIPANT_ID]]/[[NIPOPPY_BIDS_SESSION_ID]]/dipy/sub-[[NIPOPPY_BIDS_PARTICIPANT_ID]]_ses-[[NIPOPPY_BIDS_SESSION_ID]]_model_dti_param-tensor_map.nii.gz",	"[[NIPOPPY_BIDS_PARTICIPANT_ID]]/[[NIPOPPY_BIDS_SESSION_ID]]/scilpy/sub-[[NIPOPPY_BIDS_PARTICIPANT_ID]]_ses-[[NIPOPPY_BIDS_SESSION_ID]]_model-fwdti_desc-fwcorr_dwi.nii.gz"
+  "PATHS": [
+	"[[NIPOPPY_BIDS_PARTICIPANT_ID]]/[[NIPOPPY_BIDS_SESSION_ID]]/dipy/sub-[[NIPOPPY_BIDS_PARTICIPANT_ID]]_ses-[[NIPOPPY_BIDS_SESSION_ID]]_model_dti_param-tensor_map.nii.gz",
+	"[[NIPOPPY_BIDS_PARTICIPANT_ID]]/[[NIPOPPY_BIDS_SESSION_ID]]/scilpy/sub-[[NIPOPPY_BIDS_PARTICIPANT_ID]]_ses-[[NIPOPPY_BIDS_SESSION_ID]]_model-fwdti_desc-fwcorr_dwi.nii.gz"
   ]
 }

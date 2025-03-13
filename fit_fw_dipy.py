@@ -11,7 +11,7 @@ from dipy.reconst.dti import norm, geodesic_anisotropy
 import dipy.reconst.dti as dti
 import dipy.reconst.fwdti as fwdti
 
-OUTPUT_VERSION = "0.9.0"
+OUTPUT_VERSION = "1.0.0"
 
 
 def _saveNifti(data, affine, file_name):

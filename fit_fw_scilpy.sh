@@ -1,8 +1,21 @@
 #!/bin/bash
 
 # add default usage for container check
-if [ "$#" -ne 6 ]; then
-	echo "Usage: $0 <subject> <session> <dwi_file> <bval> <bvec> <output_dir>"
+if [ "$#" -lt 6 ]; then
+	echo "$0: Estimate a DTI / fwDTI model with common parameter and residual estimation"
+	echo ""
+	echo "Usage: $0 <subject> <session> <dwi_file> <bval> <bvec> <output_dir> <use_shells>"
+	echo ""
+	echo "  <subject>     - subject ID - for name in output path"
+	echo "  <session>     - session ID - for name in output path"
+	echo "  <dwi_file>    - dMRI data file"
+	echo "  <bval>        - corresponding bval file"
+	echo "  <bvec>        - corresponding bvec file"
+	echo "  <output_dir>  - output directory"
+	echo "  <use_shells>  - subset to a specific set of shells (optional)"
+	echo "                  bzero (0) shell is always required"
+	echo '                  e.g. "0 1000" - double quoted, space separated'
+	echo ""
 	exit 1
 fi
 
@@ -18,20 +31,49 @@ INPBVEC=$5
 # input / output paths
 OUTPATH=$6
 
+# subset to a specific set of shells
+USESHELL=$7
+
 # tag a version of this pipeline
 OUTVERS=1.0.0
 
 # output directory
-OUTDPY=$OUTPATH/fwdti/$OUTVERS/sub-$SUBJ/$SESS/dipy
-OUTSPY=$OUTPATH/fwdti/$OUTVERS/sub-$SUBJ/$SESS/scilpy
+OUTDPY=$OUTPATH/fwdti/${OUTVERS}/sub-${SUBJ}/ses-${SESS}/dipy
+OUTSPY=$OUTPATH/fwdti/${OUTVERS}/sub-${SUBJ}/ses-${SESS}/scilpy
 
 # create output directories
 mkdir -p $OUTDPY
 mkdir -p $OUTSPY
 
 # output file stems
-DPYNAM=$OUTDPY/sub-${SUBJ}_${SESS}
-SPYNAM=$OUTSPY/sub-${SUBJ}_${SESS}_model-fwdti
+DPYNAM=$OUTDPY/sub-${SUBJ}_ses-${SESS}
+SPYNAM=$OUTSPY/sub-${SUBJ}_ses-${SESS}_model-fwdti
+
+# if USESHELL is set, subset the data to the specified shells
+if [ -n "$USESHELL" ]; then
+
+	# create a workdir to store subset shells
+	echo "Creating working directory to store subset shells..."
+	WORKDIR=${OUTPATH}/fwdti/${OUTVERS}/sub-${SUBJ}/ses-${SESS}/work
+	mkdir -p $WORKDIR
+
+	# fix shells to a not awful file name part
+	SHELLS=b$(echo $USESHELL | tr -s "[:blank:]+" "b")
+
+	# create new input stem
+	WRKNAM=${WORKDIR}/sub-${SUBJ}_ses-${SESS}_acq-${SHELLS}_dwi
+
+	# subset the data to the specified shells
+	scil_extract_dwi_shell.py $INPDWIS $INPBVAL $INPBVEC $USESHELL \
+							  ${WRKNAM}.nii.gz ${WRKNAM}.bval ${WRKNAM}.bvec \
+							  -f --tolerance 15
+
+	# update the input names
+	INPDWIS=${WRKNAM}.nii.gz
+	INPBVAL=${WRKNAM}.bval
+	INPBVEC=${WRKNAM}.bvec
+
+fi
 
 # run dipy to create mask, regular tensor and fwdti (if supported by the data)
 python /opt/fwdti/fit_fw_dipy.py --dwi_data $INPDWIS --dwi_bval $INPBVAL --dwi_bvec $INPBVEC --output_stem $DPYNAM
@@ -78,3 +120,6 @@ mv ${SPYNAM}_param-evecs_map_v2.nii.gz ${SPYNAM}_param-evec2_map.nii.gz
 mv ${SPYNAM}_param-evecs_map_v3.nii.gz ${SPYNAM}_param-evec3_map.nii.gz
 mv ${SPYNAM}_param-pulsation_map_std_dwi.nii.gz ${SPYNAM}_desc-dwi_pulsationSTD_map.nii.gz
 mv ${SPYNAM}_param-pulsation_map_std_b0.nii.gz ${SPYNAM}_desc-b0_pulsationSTD_map.nii.gz
+
+# remove the .npy files, .png and config.pickle
+rm ${OUTSPY}/*.npy ${OUTSPY}/*.png ${OUTSPY}/config.pickle
