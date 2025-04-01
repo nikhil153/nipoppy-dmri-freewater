@@ -43,12 +43,9 @@ OUTPATH=$6
 # subset to a specific set of shells
 USESHELL=$7
 
-# tag a version of this pipeline
-OUTVERS=1.0.0
-
 # output directory
-OUTDPY=$OUTPATH/fwdti/${OUTVERS}/sub-${SUBJ}/ses-${SESS}/dipy
-OUTSPY=$OUTPATH/fwdti/${OUTVERS}/sub-${SUBJ}/ses-${SESS}/scilpy
+OUTDPY=$OUTPATH/sub-${SUBJ}/ses-${SESS}/dipy
+OUTSPY=$OUTPATH/sub-${SUBJ}/ses-${SESS}/scilpy
 
 # create output directories
 mkdir -p $OUTDPY
@@ -63,7 +60,7 @@ if [ -n "$USESHELL" ]; then
 
 	# create a workdir to store subset shells
 	echo "Creating working directory to store subset shells..."
-	WORKDIR=${OUTPATH}/fwdti/${OUTVERS}/sub-${SUBJ}/ses-${SESS}/work
+	WORKDIR=${OUTPATH}/sub-${SUBJ}/ses-${SESS}/work
 	mkdir -p $WORKDIR
 
 	# fix shells to a not awful file name part
