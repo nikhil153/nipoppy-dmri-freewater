@@ -29,7 +29,7 @@ INPBVAL=$4
 INPBVEC=$5
 
 # check if input files exist
-if [ ! -f ${INPDWIS} | ! -f ${INPBVAL} | ! -f ${INPBVEC} ]; then
+if [[ ! -f ${INPDWIS} || ! -f ${INPBVAL} || ! -f ${INPBVEC} ]]; then
 	echo "Input DWI file(s) not found:"
 	echo "    DWI:  ${INPDWIS}"
 	echo "    BVAL: ${INPBVAL}"
