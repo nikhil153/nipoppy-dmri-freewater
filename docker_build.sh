@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # build the docker image w/ local Dockerfile
-docker build -t bcmcpher/dMRI-freewater .
+docker build -t bcmcpher/dmri-freewater .
 
 # add a version tag
-docker tag bcmcpher/dMRI-freewater bcmcpher/dMRI-freewater:1.0.0
+docker tag bcmcpher/dmri-freewater bcmcpher/dmri-freewater:1.0.0
 
 # push the image to dockerhub to pull for apptainer build
-docker push bcmcpher/dMRI-freewater:1.0.0
+docker push bcmcpher/dmri-freewater:1.0.0
 
 # build the apptainer version of the image
-apptainer build dMRI-freewater_1.0.0.sif docker://bcmcpher/dMRI-freewater:1.0.0
+apptainer build dmri-freewater_1.0.0.sif docker://bcmcpher/dmri-freewater:1.0.0
