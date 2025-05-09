@@ -88,11 +88,11 @@ python /opt/fwdti/fit_fw_dipy.py --dwi_data $INPDWIS --dwi_bval $INPBVAL --dwi_b
 scil_freewater_maps.py $INPDWIS $INPBVAL $INPBVEC --mask ${DPYNAM}_desc-brain_mask.nii.gz --out_dir $OUTSPY -f
 
 # rename scilpy outputs
-mv $OUTSPY/dwi_fw_corrected.nii.gz ${SPYNAM}_desc-fwcorr_dwi.nii.gz
-mv $OUTSPY/FIT_dir.nii.gz ${SPYNAM}_param-dir.nii.gz
-mv $OUTSPY/FIT_FiberVolume.nii.gz ${SPYNAM}_param-fibervolume.nii.gz
-mv $OUTSPY/FIT_FW.nii.gz ${SPYNAM}_param-freewater_map.nii.gz
-mv $OUTSPY/FIT_nrmse.nii.gz ${SPYNAM}_param-nrmse_map.nii.gz
+mv $OUTSPY/DWI_corrected.nii.gz ${SPYNAM}_desc-fwcorr_dwi.nii.gz
+mv $OUTSPY/fit_dir.nii.gz ${SPYNAM}_param-dir.nii.gz
+mv $OUTSPY/fit_FiberVolume.nii.gz ${SPYNAM}_param-fibervolume.nii.gz
+mv $OUTSPY/fit_FW.nii.gz ${SPYNAM}_param-freewater_map.nii.gz
+mv $OUTSPY/fit_NRMSE.nii.gz ${SPYNAM}_param-nrmse_map.nii.gz
 
 # copy bval/bvec files for fw corrected dwi data
 cp $INPBVAL ${SPYNAM}_desc-fwcorr_dwi.bval
