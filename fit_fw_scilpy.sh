@@ -70,7 +70,7 @@ if [ -n "$USESHELL" ]; then
 	WRKNAM=${WORKDIR}/sub-${SUBJ}_ses-${SESS}_acq-${SHELLS}_dwi
 
 	# subset the data to the specified shells
-	scil_extract_dwi_shell.py $INPDWIS $INPBVAL $INPBVEC $USESHELL \
+	scil_dwi_extract_shell.py $INPDWIS $INPBVAL $INPBVEC $USESHELL \
 							  ${WRKNAM}.nii.gz ${WRKNAM}.bval ${WRKNAM}.bvec \
 							  -f --tolerance 15
 
@@ -85,7 +85,7 @@ fi
 python /opt/fwdti/fit_fw_dipy.py --dwi_data $INPDWIS --dwi_bval $INPBVAL --dwi_bvec $INPBVEC --output_stem $DPYNAM
 
 # run the amico fw model through scilpy
-scil_compute_freewater.py $INPDWIS $INPBVAL $INPBVEC --out_dir $OUTSPY -f
+scil_freewater_maps.py $INPDWIS $INPBVAL $INPBVEC --mask ${DPYNAM}_desc-brain_mask.nii.gz --out_dir $OUTSPY -f
 
 # rename scilpy outputs
 mv $OUTSPY/dwi_fw_corrected.nii.gz ${SPYNAM}_desc-fwcorr_dwi.nii.gz
@@ -99,23 +99,23 @@ cp $INPBVAL ${SPYNAM}_desc-fwcorr_dwi.bval
 cp $INPBVEC ${SPYNAM}_desc-fwcorr_dwi.bvec
 
 # create the fw tensor metric parameter map files
-scil_compute_dti_metrics.py ${SPYNAM}_desc-fwcorr_dwi.nii.gz $INPBVAL $INPBVEC \
-							--mask ${DPYNAM}_desc-brain_mask.nii.gz \
-							--tensor ${SPYNAM}_param-tensor_map.nii.gz \
-							--evals ${SPYNAM}_param-evals_map.nii.gz \
-							--evecs ${SPYNAM}_param-evecs_map.nii.gz \
-							--rgb ${SPYNAM}_param-rgb_map.nii.gz \
-							--fa ${SPYNAM}_param-fa_map.nii.gz \
-							--ga ${SPYNAM}_param-ga_map.nii.gz \
-							--md ${SPYNAM}_param-md_map.nii.gz \
-							--ad ${SPYNAM}_param-ad_map.nii.gz \
-							--rd ${SPYNAM}_param-rd_map.nii.gz \
-							--mode ${SPYNAM}_param-mode_map.nii.gz \
-							--norm ${SPYNAM}_param-norm_map.nii.gz \
-							--non-physical ${SPYNAM}_param-nonphysical_mask.nii.gz \
-							--pulsation ${SPYNAM}_param-pulsation_map.nii.gz \
-							--residual ${SPYNAM}_param-residual_map.nii.gz \
-							--tensor_format dipy -f
+scil_dti_metrics.py ${SPYNAM}_desc-fwcorr_dwi.nii.gz $INPBVAL $INPBVEC \
+					--mask ${DPYNAM}_desc-brain_mask.nii.gz \
+					--tensor ${SPYNAM}_param-tensor_map.nii.gz \
+					--evals ${SPYNAM}_param-evals_map.nii.gz \
+					--evecs ${SPYNAM}_param-evecs_map.nii.gz \
+					--rgb ${SPYNAM}_param-rgb_map.nii.gz \
+					--fa ${SPYNAM}_param-fa_map.nii.gz \
+					--ga ${SPYNAM}_param-ga_map.nii.gz \
+					--md ${SPYNAM}_param-md_map.nii.gz \
+					--ad ${SPYNAM}_param-ad_map.nii.gz \
+					--rd ${SPYNAM}_param-rd_map.nii.gz \
+					--mode ${SPYNAM}_param-mode_map.nii.gz \
+					--norm ${SPYNAM}_param-norm_map.nii.gz \
+					--non-physical ${SPYNAM}_param-nonphysical_mask.nii.gz \
+					--pulsation ${SPYNAM}_param-pulsation_map.nii.gz \
+					--residual ${SPYNAM}_param-residual_map.nii.gz \
+					--tensor_format dipy -f
 
 # rename files for symmetry w/ dipy / better bids derivative compliance
 mv ${SPYNAM}_param-evals_map_e1.nii.gz ${SPYNAM}_param-eval1_map.nii.gz

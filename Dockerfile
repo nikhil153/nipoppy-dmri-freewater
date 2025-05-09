@@ -1,4 +1,4 @@
-FROM scilus/scilus:1.6.0
+FROM scilus/scilus:2.0.2
 
 # install the code
 RUN mkdir -p /opt/fwdti
