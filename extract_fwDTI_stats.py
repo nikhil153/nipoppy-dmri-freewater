@@ -197,7 +197,7 @@ for pipe in pipelines:
             except:
                 print(" -- -- Failed to load DT FA image for alignment. Nothing can be done.")
                 continue
-            
+
             _, sub2mni = affine_registration(
                 mov,
                 ref,
@@ -262,7 +262,7 @@ for pipe in pipelines:
 
         # preallocate output lists
         dpdtfa_mean = []
-        dpdtmd_mean = [] 
+        dpdtmd_mean = []
         dpdtrd_mean = []
         dpdtad_mean = []
         dpdtfw_mean = np.zeros(nlabs)
