@@ -125,8 +125,11 @@ saffdir = Path(Path(label_vol).parent.absolute(), "affine")
 for pipe in pipelines:
 
     # get top level label for IDPs
-    pname = os.path.basename(pipe).replace("dmri_freewater_", "")
-    pvers = os.listdir(Path(pipe))[0]
+    # pname = os.path.basename(pipe).replace("dmri_freewater_", "")
+    # pvers = os.listdir(Path(pipe))[0]
+    # print(f"Pipeline - Version: {pname}-{pvers}")
+    pname = os.path.basename(pipe)
+    pvers = "2.0.0"
     print(f"Pipeline - Version: {pname}-{pvers}")
 
     # build input / output paths
@@ -149,6 +152,7 @@ for pipe in pipelines:
 
         # if the file exists and no redo flag, skip iteration
         if outfile.exists() & (not redo):
+            print(f" --  -- Data already extracted for: {subj}. Skipping.")
             continue
 
         # load the files to extract
@@ -157,20 +161,24 @@ for pipe in pipelines:
         spdir = Path(datadir, subj, f"ses-{sess}", "scilpy")
 
         # loading bvals to check the kind of data
-        bval = np.loadtxt(Path(spdir, f"sub-{sub}_ses-{sess}_model-fwdti_desc-fwcorr_dwi.bval"))
-        if len(np.unique(bval)) < 3:
-            print(" --  --  -- Single-shell data loaded")
-            tshell = "single-shell"
-        else:
-            print(" --  --  -- Multi-shell data loaded")
-            tshell = "multi-shell"
+        try:
+            bval = np.loadtxt(Path(spdir, f"sub-{sub}_ses-{sess}_model-fwdti_desc-fwcorr_dwi.bval"))
+            if len(np.unique(bval)) < 3:
+                print(" --  --  -- Single-shell data loaded")
+                tshell = "single-shell"
+            else:
+                print(" --  --  -- Multi-shell data loaded")
+                tshell = "multi-shell"
+        except:
+            print(" --  --  -- Bval not found?")
+            tshell = "missing"
 
         #
         # linearly align dipy DTI FA (dpdtfa) to input ref
         #
 
         # path to subject affine file
-        subj_aff_stem = f"sub-{sub}_ses-{sess}_{label_aff}_sub2mni.txt"
+        subj_aff_stem = f"sub-{sub}_ses-{sess}_{pname}-{pvers}_{label_aff}_sub2mni.txt"
         subj_aff = Path(saffdir, subj_aff_stem)
 
         # if the affine file exists, load it
@@ -183,7 +191,13 @@ for pipe in pipelines:
         # otherwise compute alignment of FA to template
         else:
             print(" --  --  -- Affine alignment not found. Computing.")
-            mov = nib.load(Path(dpdir, f"sub-{sub}_ses-{sess}_model-dti_param-fa_map.nii.gz"))
+
+            try:
+                mov = nib.load(Path(dpdir, f"sub-{sub}_ses-{sess}_model-dti_param-fa_map.nii.gz"))
+            except:
+                print(" -- -- Failed to load DT FA image for alignment. Nothing can be done.")
+                continue
+            
             _, sub2mni = affine_registration(
                 mov,
                 ref,
@@ -224,31 +238,49 @@ for pipe in pipelines:
         # load data files
         print(" --  --  -- Loading data files for extraction.")
         dpdtfa = tryLoad(Path(dpdir, f"sub-{sub}_ses-{sess}_model-dti_param-fa_map.nii.gz"), tlabs)
+        dpdtmd = tryLoad(Path(dpdir, f"sub-{sub}_ses-{sess}_model-dti_param-md_map.nii.gz"), tlabs)
+        dpdtrd = tryLoad(Path(dpdir, f"sub-{sub}_ses-{sess}_model-dti_param-rd_map.nii.gz"), tlabs)
+        dpdtad = tryLoad(Path(dpdir, f"sub-{sub}_ses-{sess}_model-dti_param-ad_map.nii.gz"), tlabs)
         dpdtse = tryLoad(Path(dpdir, f"sub-{sub}_ses-{sess}_model-dti_param-nrmse_map.nii.gz"), tlabs)
         dpdtrs = tryLoad(Path(dpdir, f"sub-{sub}_ses-{sess}_model-dti_param-residual_map.nii.gz"), tlabs)
 
         dpfwfa = tryLoad(Path(dpdir, f"sub-{sub}_ses-{sess}_model-fwdti_param-fa_map.nii.gz"), tlabs)
+        dpfwmd = tryLoad(Path(dpdir, f"sub-{sub}_ses-{sess}_model-fwdti_param-md_map.nii.gz"), tlabs)
+        dpfwrd = tryLoad(Path(dpdir, f"sub-{sub}_ses-{sess}_model-fwdti_param-rd_map.nii.gz"), tlabs)
+        dpfwad = tryLoad(Path(dpdir, f"sub-{sub}_ses-{sess}_model-fwdti_param-ad_map.nii.gz"), tlabs)
         dpfwfw = tryLoad(Path(dpdir, f"sub-{sub}_ses-{sess}_model-fwdti_param-freewater_map.nii.gz"), tlabs)
         dpfwse = tryLoad(Path(dpdir, f"sub-{sub}_ses-{sess}_model-fwdti_param-nrmse_map.nii.gz"), tlabs)
         dpfwrs = tryLoad(Path(dpdir, f"sub-{sub}_ses-{sess}_model-fwdti_param-residual_map.nii.gz"), tlabs)
 
         spfwfa = tryLoad(Path(spdir, f"sub-{sub}_ses-{sess}_model-fwdti_param-fa_map.nii.gz"), tlabs)
+        spfwmd = tryLoad(Path(spdir, f"sub-{sub}_ses-{sess}_model-fwdti_param-md_map.nii.gz"), tlabs)
+        spfwrd = tryLoad(Path(spdir, f"sub-{sub}_ses-{sess}_model-fwdti_param-rd_map.nii.gz"), tlabs)
+        spfwad = tryLoad(Path(spdir, f"sub-{sub}_ses-{sess}_model-fwdti_param-ad_map.nii.gz"), tlabs)
         spfwfw = tryLoad(Path(spdir, f"sub-{sub}_ses-{sess}_model-fwdti_param-freewater_map.nii.gz"), tlabs)
         spfwse = tryLoad(Path(spdir, f"sub-{sub}_ses-{sess}_model-fwdti_param-nrmse_map.nii.gz"), tlabs)
         spfwrs = tryLoad(Path(spdir, f"sub-{sub}_ses-{sess}_model-fwdti_param-residual_map.nii.gz"), tlabs)
 
         # preallocate output lists
         dpdtfa_mean = []
+        dpdtmd_mean = [] 
+        dpdtrd_mean = []
+        dpdtad_mean = []
         dpdtfw_mean = np.zeros(nlabs)
         dpdtse_mean = []
         dpdtrs_mean = []
 
         dpfwfa_mean = []
+        dpfwmd_mean = []
+        dpfwrd_mean = []
+        dpfwad_mean = []
         dpfwfw_mean = []
         dpfwse_mean = []
         dpfwrs_mean = []
 
         spfwfa_mean = []
+        spfwmd_mean = []
+        spfwrd_mean = []
+        spfwad_mean = []
         spfwfw_mean = []
         spfwse_mean = []
         spfwrs_mean = []
@@ -256,15 +288,24 @@ for pipe in pipelines:
         # for every roi label, get the mean value w/in the labels
         for idx, roi in enumerate(labels):
             dpdtfa_mean.append(nanAvg(dpdtfa[tldat == roi]))
+            dpdtmd_mean.append(nanAvg(dpdtmd[tldat == roi]))
+            dpdtrd_mean.append(nanAvg(dpdtrd[tldat == roi]))
+            dpdtad_mean.append(nanAvg(dpdtad[tldat == roi]))
             dpdtse_mean.append(nanAvg(dpdtse[tldat == roi]))
             dpdtrs_mean.append(nanAvg(dpdtrs[tldat == roi]))
 
             dpfwfa_mean.append(nanAvg(dpfwfa[tldat == roi]))
+            dpfwmd_mean.append(nanAvg(dpfwmd[tldat == roi]))
+            dpfwrd_mean.append(nanAvg(dpfwrd[tldat == roi]))
+            dpfwad_mean.append(nanAvg(dpfwad[tldat == roi]))
             dpfwfw_mean.append(nanAvg(dpfwfw[tldat == roi]))
             dpfwse_mean.append(nanAvg(dpfwse[tldat == roi]))
             dpfwrs_mean.append(nanAvg(dpfwrs[tldat == roi]))
 
             spfwfa_mean.append(nanAvg(spfwfa[tldat == roi]))
+            spfwmd_mean.append(nanAvg(spfwmd[tldat == roi]))
+            spfwrd_mean.append(nanAvg(spfwrd[tldat == roi]))
+            spfwad_mean.append(nanAvg(spfwad[tldat == roi]))
             spfwfw_mean.append(nanAvg(spfwfw[tldat == roi]))
             spfwse_mean.append(nanAvg(spfwse[tldat == roi]))
             spfwrs_mean.append(nanAvg(spfwrs[tldat == roi]))
@@ -276,6 +317,9 @@ for pipe in pipelines:
         # merge regular dipy tensor
         dpdt_data = pd.DataFrame([roi_labels,
                                   dpdtfa_mean,
+                                  dpdtmd_mean,
+                                  dpdtrd_mean,
+                                  dpdtad_mean,
                                   dpdtfw_mean,
                                   dpdtse_mean,
                                   dpdtrs_mean])
@@ -288,12 +332,15 @@ for pipe in pipelines:
         dpdt_data["model"] = "dti"
 
         # label and reorder columns
-        dpdt_data.columns = ["roi_labels", "fa", "fw", "nrmse", "residual", "subj", "pipeline", "software", "shell", "model"]
-        dpdt_data = dpdt_data[["subj", "pipeline", "software", "shell", "model", "roi_labels", "fa", "fw", "nrmse", "residual"]]
+        dpdt_data.columns = ["roi_labels", "fa", "md", "rd", "ad", "fw", "nrmse", "residual", "subj", "pipeline", "software", "shell", "model"]
+        dpdt_data = dpdt_data[["subj", "pipeline", "software", "shell", "model", "roi_labels", "fa", "md", "rd", "ad", "fw", "nrmse", "residual"]]
 
         # merge fw dipy tensor
         dpfw_data = pd.DataFrame([roi_labels,
                                   dpfwfa_mean,
+                                  dpfwmd_mean,
+                                  dpfwrd_mean,
+                                  dpfwad_mean,
                                   dpfwfw_mean,
                                   dpfwse_mean,
                                   dpfwrs_mean])
@@ -306,12 +353,15 @@ for pipe in pipelines:
         dpfw_data["model"] = "fwdti"
 
         # label and reorder columns
-        dpfw_data.columns = ["roi_labels", "fa", "fw", "nrmse", "residual", "subj", "pipeline", "software", "shell", "model"]
-        dpfw_data = dpfw_data[["subj", "pipeline", "software", "shell", "model", "roi_labels", "fa", "fw", "nrmse", "residual"]]
+        dpfw_data.columns = ["roi_labels", "fa", "md", "rd", "ad", "fw", "nrmse", "residual", "subj", "pipeline", "software", "shell", "model"]
+        dpfw_data = dpfw_data[["subj", "pipeline", "software", "shell", "model", "roi_labels", "fa", "md", "rd", "ad", "fw", "nrmse", "residual"]]
 
         # merge scilpy fw tensor
         spfw_data = pd.DataFrame([roi_labels,
                                   spfwfa_mean,
+                                  spfwmd_mean,
+                                  spfwrd_mean,
+                                  spfwad_mean,
                                   spfwfw_mean,
                                   spfwse_mean,
                                   spfwrs_mean])
@@ -324,8 +374,8 @@ for pipe in pipelines:
         spfw_data["model"] = "fwdti"
 
         # label and reorder columns
-        spfw_data.columns = ["roi_labels", "fa", "fw", "nrmse", "residual", "subj", "pipeline", "software", "shell", "model"]
-        spfw_data = spfw_data[["subj", "pipeline", "software", "shell", "model", "roi_labels", "fa", "fw", "nrmse", "residual"]]
+        spfw_data.columns = ["roi_labels", "fa", "md", "rd", "ad", "fw", "nrmse", "residual", "subj", "pipeline", "software", "shell", "model"]
+        spfw_data = spfw_data[["subj", "pipeline", "software", "shell", "model", "roi_labels", "fa", "md", "rd", "ad", "fw", "nrmse", "residual"]]
 
         # merge the dataframes
         sdata = pd.concat([dpdt_data, dpfw_data, spfw_data])
