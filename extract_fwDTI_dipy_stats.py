@@ -241,7 +241,7 @@ pipeline_idps_dir = f"{dataset}/derivatives/dmri-freewater/2.0.0/idp/"
 
 bids_participant_list = ["sub-YLOPD31"] #,"sub-YLOPD321"]
 session_id = "01"
-save_test_reg_images = False
+save_test_reg_images = True
 test_reg_images_dir = "./test_reg_images"
 
 # check is session id has sub- prefix
@@ -251,7 +251,7 @@ if session_id.startswith("ses-"):
 session = f"ses-{session_id}"
 
 # labels and reference volumes
-labels_dir = "/home/nikhil/projects/neuroinformatics_tools/nipoppy-dmri-freewater/atlases/"
+labels_dir = "/home/nikhil/projects/neuroinformatics_tools/sandbox/nipoppy-dmri-freewater/atlases/"
 
 ref_img = f"{labels_dir}/JHU-ICBM-FA-1mm.nii.gz"
 ref_label = f"{labels_dir}/JHU-ICBM-labels-1mm.nii.gz"
@@ -268,11 +268,12 @@ labs, labels, roi_labels = loadLabels(ref_label, label_map)
 parc = Path(ref_label).name.replace(".nii.gz", "")
 nlabs = len(roi_labels)
 
+label_map_df = pd.DataFrame()
+label_map_df["roi_idx"] = labels
+label_map_df["roi_name"] = roi_labels
+
 # load the reference volume for coregistration
 ref = nib.load(ref_img)
-
-# the path to the shared affine transform
-saffdir = Path(Path(ref_label).parent.absolute(), "affine")
 
 # get top level label for IDPs
 pname = "qsiprep-fw"
@@ -304,34 +305,33 @@ for bids_participant in bids_participant_list:
     dpdir = Path(datadir, bids_participant, f"{session}", "dipy")
     spdir = Path(datadir, bids_participant, f"{session}", "scilpy")
 
+    mov = nib.load(Path(dpdir, f"{bids_participant}_{session}_model-dti_param-fa_map.nii.gz"))
 
     if save_test_reg_images:
         nib.save(mov, f'{test_reg_images_dir}/sub_orig.nii.gz')
         nib.save(ref, f'{test_reg_images_dir}/ref_orig.nii.gz')
         nib.save(labs, f'{test_reg_images_dir}/label_orig.nii.gz')
-    
 
+    # linearly align dipy DTI FA (dpdtfa) to input ref
     if reg_method == "affine":
-        # linearly align dipy DTI FA (dpdtfa) to input ref
-
+        
         # path to subject affine file
+        sub_aff_dir = f"{pipeline_output_dir}/{bids_participant}/{session}/affine/"
         subj_aff_stem = f"{bids_participant}_{session}_{label_aff}_sub2ref.txt"
-        subj_aff_path = Path(saffdir, subj_aff_stem)
+        subj_aff_path = Path(sub_aff_dir, subj_aff_stem)
 
         # if the affine file exists, load it
         sub2ref = None
         if subj_aff_path.exists():
             print(f" --  --  -- Using existing affine: {subj_aff_stem}")
             sub2ref = np.loadtxt(subj_aff_path)
-        
-        mov = nib.load(Path(dpdir, f"{bids_participant}_{session}_model-dti_param-fa_map.nii.gz"))
 
         # align and resample the moving image to the reference
         sub_transformed, ref_transformed, label_transformed, sub2ref = align_and_resample(mov, ref, labs, sub2ref)
 
         # save the affine to disk
         if not subj_aff_path.exists():
-            saffdir.mkdir(parents=True, exist_ok=True)
+            sub_aff_dir.mkdir(parents=True, exist_ok=True)
             print(f" --  --  -- Saving affine to: {subj_aff_path}")
             np.savetxt(subj_aff_path, sub2ref)
 
@@ -344,19 +344,26 @@ for bids_participant in bids_participant_list:
     elif reg_method == "syn":
 
         # path to subject warp file
+        sub_warp_dir = f"{pipeline_output_dir}/{bids_participant}/{session}/warp/"
         subj_warp_stem = f"{bids_participant}_{session}_{label_aff}_sub2ref_warp.nii.gz"
-        subj_warp_path = Path(saffdir, subj_warp_stem)
+        subj_warp_path = Path(sub_warp_dir, subj_warp_stem)
 
         # load existing warp if exists
-        sub2ref = read_mapping(subj_warp_path, ref, mov)
+        sub2ref = None
+        if subj_warp_path.exists():
+            print(f"Using existing warp from: {subj_warp_path}")
+            
+            sub2ref = read_mapping(str(subj_warp_path), mov, ref)
 
         # syn registration
         print("Syn registration started")
-        sub_transformed, ref_transformed, label_transformed, sub2ref = warp_and_resample(mov, ref, labs)
+        sub_transformed, ref_transformed, label_transformed, sub2ref = warp_and_resample(mov, ref, labs, sub2ref)
         print("Syn registration complete")
 
         # save warps
-        write_mapping(sub2ref, warp_path)
+        if not subj_warp_path.exists():
+            print(f"Saving warp to: {subj_warp_path}")
+            write_mapping(sub2ref, subj_warp_path)
 
         if save_test_reg_images:
             nib.save(sub_transformed, f'{test_reg_images_dir}/sub_syn_transformed.nii.gz')
@@ -364,90 +371,42 @@ for bids_participant in bids_participant_list:
             nib.save(label_transformed, f'{test_reg_images_dir}/label_syn_transformed.nii.gz')
 
         
-
-    
-
     # get resampled labels
     tldat = label_transformed.get_fdata()
 
     # load and prep data for extraction
+    diff_params = ["fa","md","ad","nrmse","residual"]
 
     # load data files
-    print(" --  --  -- Loading data files for extraction.")
-    dpdtfa = tryLoad(Path(dpdir, f"{bids_participant}_{session}_model-dti_param-fa_map.nii.gz"), label_transformed)
-    dpdtse = tryLoad(Path(dpdir, f"{bids_participant}_{session}_model-dti_param-nrmse_map.nii.gz"), label_transformed)
-    dpdtrs = tryLoad(Path(dpdir, f"{bids_participant}_{session}_model-dti_param-residual_map.nii.gz"), label_transformed)
-    dpfwfa = tryLoad(Path(dpdir, f"{bids_participant}_{session}_model-fwdti_param-fa_map.nii.gz"), label_transformed)
-    dpfwfw = tryLoad(Path(dpdir, f"{bids_participant}_{session}_model-fwdti_param-freewater_map.nii.gz"), label_transformed)
-    dpfwse = tryLoad(Path(dpdir, f"{bids_participant}_{session}_model-fwdti_param-nrmse_map.nii.gz"), label_transformed)
-    dpfwrs = tryLoad(Path(dpdir, f"{bids_participant}_{session}_model-fwdti_param-residual_map.nii.gz"), label_transformed)
+    print(" --  --  -- Loading data files for extraction.")   
+    summary_df = pd.DataFrame() 
+    for diff_p in diff_params:
+        diff_param_map = tryLoad(Path(dpdir, f"{bids_participant}_{session}_model-dti_param-{diff_p}_map.nii.gz"), label_transformed)
+        diff_FW_param_map = tryLoad(Path(dpdir, f"{bids_participant}_{session}_model-fwdti_param-{diff_p}_map.nii.gz"), label_transformed)
 
-    # preallocate output lists
-    dpdtfa_mean = []
-    dpdtfw_mean = np.zeros(nlabs)
-    dpdtse_mean = []
-    dpdtrs_mean = []
+        # for every roi label, get the mean value w/in the labels
+        dti_roi_df = pd.DataFrame(columns=["roi_idx","model","param","mean_value"])
+        fwdti_roi_df = pd.DataFrame(columns=["roi_idx","model","param","mean_value"])
+        for idx, roi in enumerate(labels):
+            # Default
+            dti_avg_val = nanAvg(diff_param_map[tldat == roi])
+            dti_roi_df.loc[idx] = [roi, "dti", diff_p, dti_avg_val]
+            # FW
+            FW_avg_val = nanAvg(diff_FW_param_map[tldat == roi])
+            fwdti_roi_df.loc[idx] = [roi, "fwdti", diff_p, dti_avg_val]
 
-    dpfwfa_mean = []
-    dpfwfw_mean = []
-    dpfwse_mean = []
-    dpfwrs_mean = []
+        roi_df = pd.concat([dti_roi_df,fwdti_roi_df], axis=0)
+        summary_df = pd.concat([summary_df, roi_df])
 
-    # for every roi label, get the mean value w/in the labels
-    for idx, roi in enumerate(labels):
-        dpdtfa_mean.append(nanAvg(dpdtfa[tldat == roi]))
-        dpdtse_mean.append(nanAvg(dpdtse[tldat == roi]))
-        dpdtrs_mean.append(nanAvg(dpdtrs[tldat == roi]))
-
-        dpfwfa_mean.append(nanAvg(dpfwfa[tldat == roi]))
-        dpfwfw_mean.append(nanAvg(dpfwfw[tldat == roi]))
-        dpfwse_mean.append(nanAvg(dpfwse[tldat == roi]))
-        dpfwrs_mean.append(nanAvg(dpfwrs[tldat == roi]))
-
-
-    # merge regular dipy tensor
-    dpdt_data = pd.DataFrame([roi_labels,
-                                dpdtfa_mean,
-                                dpdtfw_mean,
-                                dpdtse_mean,
-                                dpdtrs_mean])
-    dpdt_data = dpdt_data.T
-
-    dpdt_data["participant_id"] = bids_participant
-    dpdt_data["pipeline"] = f"{pname}-{pvers}"
-    dpdt_data["software"] = "dipy"
-    dpdt_data["shell"] = tshell
-    dpdt_data["model"] = "dti"
-    dpdt_data["registration"] = reg_method
-
-
-    # label and reorder columns
-    dpdt_data.columns = ["roi_labels", "fa", "fw", "nrmse", "residual", "subj", "pipeline", "software", "shell", "model"]
-    dpdt_data = dpdt_data[["subj", "pipeline", "software", "shell", "model", "roi_labels", "fa", "fw", "nrmse", "residual"]]
-
-    # merge fw dipy tensor
-    dpfw_data = pd.DataFrame([roi_labels,
-                                dpfwfa_mean,
-                                dpfwfw_mean,
-                                dpfwse_mean,
-                                dpfwrs_mean])
-    dpfw_data = dpfw_data.T
-
-    dpfw_data["subj"] = bids_participant
-    dpfw_data["pipe"] = f"{pname}-{pvers}"
-    dpfw_data["soft"] = "dipy"
-    dpfw_data["shell"] = tshell
-    dpfw_data["model"] = "fwdti"
-
-    # label and reorder columns
-    dpfw_data.columns = ["roi_labels", "fa", "fw", "nrmse", "residual", "subj", "pipeline", "software", "shell", "model"]
-    dpfw_data = dpfw_data[["subj", "pipeline", "software", "shell", "model", "roi_labels", "fa", "fw", "nrmse", "residual"]]
-
-    # merge the dataframes
-    idp_data = pd.concat([dpdt_data, dpfw_data])
+    summary_df["participant_id"] = bids_participant
+    summary_df["pipeline"] = f"{pname}-{pvers}"
+    summary_df["software"] = "dipy"
+    summary_df["shell"] = tshell
+    summary_df["registration"] = reg_method
+    summary_df = pd.merge(summary_df,label_map_df,on="roi_idx",how="left")
 
     # write the dataframe to disk
-    idp_data.to_csv(outfile, index=False, header=True, sep="\t")
+    summary_df.to_csv(outfile, index=False, header=True, sep="\t")
     print(f" --  -- Saved {bids_participant}_{session} IDPs to disk.")
 
 print("Done.")
