@@ -30,10 +30,6 @@
     "diffusion_metrics":
     {
         "fa": "Fractional Anisotropy",
-        "md": "Mean Diffusivity",
-        "ad": "Axial Diffusivity",
-        "rd": "Radial Diffusivity",
-        "nrmse": "Normalized Root Mean Square Error",
-        "residual": "Residuals"
+        "md": "Mean Diffusivity"
     }
 }
