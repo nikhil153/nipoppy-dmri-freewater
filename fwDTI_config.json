@@ -1,0 +1,39 @@
+{
+   "preproc_pipeline":
+    {
+        "name": "dmri-freewater",
+        "version": "2.0.0",
+        "software": "dipy"
+    },
+    "reference_space":
+    {
+        "name": "JHU-ICBM-FA-1mm",
+        "type": "FA",
+        "image_path": "/home/nikhil/projects/neuroinformatics_tools/sandbox/nipoppy-dmri-freewater/atlases/JHU-ICBM-FA-1mm.nii.gz",
+        "label_path": "/home/nikhil/projects/neuroinformatics_tools/sandbox/nipoppy-dmri-freewater/atlases/JHU-ICBM-labels-1mm.nii.gz",
+        "label_desc_path": "/home/nikhil/projects/neuroinformatics_tools/sandbox/nipoppy-dmri-freewater/atlases/JHU-ICBM-tract-label_desc.tsv"
+    },
+    "affine_registration_params":
+    {
+        "type": "affine",
+        "nbins": 32,
+        "metric": "MI",
+        "pipeline": ["center_of_mass", "translation", "rigid", "affine"],
+        "level_iters": [10000, 1000, 100],
+        "sigmas": [3.0, 1.0, 0.0],
+        "factors": [4, 2, 1]
+    },
+    "diffeomorphic_registration_params":
+    {
+        "type": "syn"
+    },
+    "diffusion_metrics":
+    {
+        "fa": "Fractional Anisotropy",
+        "md": "Mean Diffusivity",
+        "ad": "Axial Diffusivity",
+        "rd": "Radial Diffusivity",
+        "nrmse": "Normalized Root Mean Square Error",
+        "residual": "Residuals"
+    }
+}

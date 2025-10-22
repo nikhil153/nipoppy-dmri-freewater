@@ -5,76 +5,22 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+import json
 import nibabel as nib
-from nibabel.processing import conform
 
 from dipy.align import affine_registration
-
-from os.path import join as pjoin
-
-import numpy as np
-
 from dipy.align import affine_registration, syn_registration, write_mapping, read_mapping
 from dipy.align.imwarp import DiffeomorphicMap
-from dipy.align.imaffine import (
-    AffineMap,
-    AffineRegistration,
-    MutualInformationMetric,
-    transform_centers_of_mass,
-)
-from dipy.align.transforms import (
-    AffineTransform3D,
-    RigidTransform3D,
-    TranslationTransform3D,
-)
-from dipy.data import fetch_stanford_hardi
-from dipy.data.fetcher import fetch_syn_data
+from dipy.align.imaffine import AffineMap
 from dipy.io.image import load_nifti
 from dipy.viz import regtools
 
-def warp_and_resample(mov, ref, label=None, sub2ref_mapping=None):
+
+def align_and_resample(mov, ref, label=None, affine_config=None, syn_config=None, sub2ref_affine=None, sub2ref_mapping=None, warp=True):
     """
-    SyN registration and creation of DiffeomorphicMap.
-
-    Parameters
-    ----------
-    mov : nibabel.Nifti1Image
-        Moving image.
-    ref : nibabel.Nifti1Image
-        Reference image.
-
-    Returns
-    -------
-    
-    """
-
-    if sub2ref_mapping is not None:
-        print(" --  --  -- Using provided warp for registration.")
-
-    else:
-        _, sub2ref_mapping = syn_registration(mov, ref)
-
-
-    # Transform the subject image data using the diffeomorphic map
-    sub_transformed_data = sub2ref_mapping.transform(mov.get_fdata())
-    sub_transformed = nib.Nifti1Image(sub_transformed_data, ref.affine)
-
-    # Transform the ref image data using the diffeomorphic map
-    ref_transformed_data = sub2ref_mapping.transform_inverse(ref.get_fdata())
-    ref_transformed = nib.Nifti1Image(ref_transformed_data, mov.affine)
-
-    if label is not None:
-        # Transform the ref label data using the diffeomorphic map
-        label_transformed_data = sub2ref_mapping.transform_inverse(label.get_fdata(), interpolation='nearest')
-        label_transformed = nib.Nifti1Image(label_transformed_data, mov.affine)
-
-
-    return sub_transformed, ref_transformed, label_transformed, sub2ref_mapping
-
-
-def align_and_resample(mov, ref, label=None, sub2ref=None):
-    """
-    Affine registration of moving image to static image and resampling of moving image to static image space.
+    Registration (linear + non-linear) of moving image to reference image and resampling of labels in the reference space.
+    Wrapping this into a single function for avoiding messy transform calls.
+    Reference: https://docs.dipy.org/stable/examples_built/registration/streamline_registration.html
 
     Parameters
     ----------
@@ -82,6 +28,14 @@ def align_and_resample(mov, ref, label=None, sub2ref=None):
         The moving image to be registered and resampled.
     ref : nibabel.Nifti1Image
         The static reference image.
+    label : nibabel.Nifti1Image, optional
+        The label image in the reference space to be resampled, by default None.
+    sub2ref_affine : np.ndarray, optional
+        Precomputed affine transformation matrix from moving to static image space, by default None.
+    sub2ref_mapping : DiffeomorphicMap, optional
+        Precomputed diffeomorphic mapping from moving to reference image space, by default None.
+    warp : bool, optional
+        Whether to perform non-linear warping after affine registration, by default True.
 
     Returns
     -------
@@ -89,55 +43,89 @@ def align_and_resample(mov, ref, label=None, sub2ref=None):
         The registered and resampled moving image.
     ref_transformed : nibabel.Nifti1Image
         The registered and resampled static image.
-    sub2ref : np.ndarray
+    label_transformed : nibabel.Nifti1Image
+        The resampled label image.
+    sub2ref_affine : np.ndarray
         The affine transformation matrix from moving to static image space.
+    sub2_ref_warp : DiffeomorphicMap
+        The diffeomorphic mapping from moving to reference image space.
+
     """
 
-    # Affine registration
-
-    if sub2ref is not None:
+    if sub2ref_affine is not None:
         print(" --  --  -- Using provided affine for registration.")
 
     else:
         print(" --  --  -- Computing affine registration.")
-        _, sub2ref = affine_registration(
+        _, sub2ref_affine = affine_registration(
             mov,
             ref,
             moving_affine=mov.affine,
             static_affine=ref.affine,
-            nbins=32,
-            metric="MI",
-            pipeline=["center_of_mass", "translation", "rigid", "affine"],
-            level_iters=[10000, 1000, 100],
-            sigmas=[3.0, 1.0, 0.0],
-            factors=[4, 2, 1],
+            nbins=affine_config.get("nbins", 32),
+            metric=affine_config.get("metric", "MI"),
+            pipeline=affine_config.get("pipeline", ["center_of_mass", "translation", "rigid", "affine"]),
+            level_iters=affine_config.get("level_iters", [10000, 1000, 100]),
+            sigmas=affine_config.get("sigmas",[3.0, 1.0, 0.0]),
+            factors=affine_config.get("factors", [4, 2, 1]),
         )
 
     # Transform the moving image
     affmap = AffineMap(
-        sub2ref,
-        ref.shape,
-        ref.affine,
-        mov.shape,
-        mov.affine,
+        sub2ref_affine,
+        domain_grid_shape=ref.shape,
+        domain_grid2world=ref.affine,
+        codomain_grid_shape=mov.shape,
+        codomain_grid2world=mov.affine,
     )
 
     # apply the transformation to the moving image data
-    sub_transformed_data = affmap.transform(mov.get_fdata())
-    sub_transformed = nib.Nifti1Image(sub_transformed_data, ref.affine)
+    sub_affined_data = affmap.transform(mov.get_fdata())
+    sub_affined = nib.Nifti1Image(sub_affined_data, ref.affine)
 
-    # apply inverse transformation to the reference image data
-    ref_transformed_data = affmap.transform_inverse(ref.get_fdata())
-    ref_transformed = nib.Nifti1Image(ref_transformed_data, mov.affine)
+    # compute non-linear warp if specified
+    if warp:
+        print(" --  --  -- Computing non-linear warp registration.")
+        if sub2ref_mapping is not None:
+            print(" --  --  -- Using provided warp for registration.")
 
-    if label is not None:
-        # resample the label image to the moving image space
-        label_transformed_data = affmap.transform_inverse(label.get_fdata(), interpolation='nearest')
-        label_transformed = nib.Nifti1Image(label_transformed_data, mov.affine) 
+        else:
+            # still using the orginal moving image but with affine pre-alignment
+            _, sub2ref_mapping = syn_registration(
+                mov,
+                ref,
+                moving_affine=mov.affine,
+                static_affine=ref.affine,
+                prealign=sub2ref_affine,
+            )
+
+        sub_warped_data = sub2ref_mapping.transform(mov.get_fdata())
+        sub_warped = nib.Nifti1Image(sub_warped_data, ref.affine)
+    
     else:
-        label_transformed = None
+        sub_warped = None
+        sub2ref_mapping = None
 
-    return sub_transformed, ref_transformed, label_transformed, sub2ref
+    # inverse align the label image to the subject space and resample
+    if label is not None:
+        if warp:         
+            # first, transform the ref label data using the diffeomorphic map   
+            label_inverse_warped_data = sub2ref_mapping.transform_inverse(label.get_fdata(), interpolation='nearest')  
+            label_inverse_warped = nib.Nifti1Image(label_inverse_warped_data, mov.affine)
+
+            # then, apply the inverse affine transform
+            label_inverse_affined_data = affmap.transform_inverse(label_inverse_warped_data, interpolation='nearest')          
+        else:
+            label_inverse_warped = None
+            label_inverse_affined_data = affmap.transform_inverse(label.get_fdata(), interpolation='nearest')
+
+        label_inverse_affined = nib.Nifti1Image(label_inverse_affined_data, mov.affine) 
+
+    else:
+        label_inverse_affined = None
+        label_inverse_warped = None
+
+    return sub_affined, sub_warped, label_inverse_affined, label_inverse_warped, sub2ref_affine, sub2ref_mapping
 
 def loadLabels(f_label_vol, f_label_map):
 
@@ -181,68 +169,58 @@ def loadLabels(f_label_vol, f_label_map):
     return(label_vol, labels_in_map, roi_labels)
 
 
-def tryLoad(invol, labs):
+def load_nii(nii_path, loader="nib"):
+    """ Load a nifti file either using nibabel or dipy """
     try:
+        if loader == "dipy":
+            vol, affine = load_nifti(nii_path)
+        else:
+            nii = nib.load(nii_path)
+            vol = nii.get_fdata()
+            affine = nii.affine
+    
+    except Exception as e:
+        print(f" -- Error loading nifti file: {nii_path}")
+        print(f" -- {e}")
+        vol = None
+        affine = None
 
-        dat = nib.load(invol)
-        vol = dat.get_fdata()
-        out = vol
-        # print(f" --  --  -- Successfully loaded: {invol}")
-
-    except:
-
-        out = np.empty(labs.shape)
-        out[:] = np.nan
-        # print(f" --  --  -- Failed to load: {invol}")
-
-    return out
-
-
-def nanAvg(inp):
-
-    if inp.size == 0:
-        out = np.nan
-
-    else:
-        try:
-            out = np.nanmean(inp)
-        except:
-            out = np.nan
-
-    return(out)
+    return vol, affine
 
 
-# parser = argparse.ArgumentParser(description="load data by subject and create dataframes of stats to merge and plot.")
-# parser.add_argument("-d", "--derivative_dir", help='Derivatives directory contained processed dMRI data', required=True)
-# parser.add_argument("-p", "--participant_id", help="participant ID(s)", nargs="+", default=None)
-# parser.add_argument("-s", "--session", help="participant session", default="01")
-# parser.add_argument("-i", "--ref_img", help="reference img for alignment estimation")
-# parser.add_argument("-l", "--ref_label", help="reference label volume to extract ROI data")
-# parser.add_argument("-m", "--label_map", help="tract labels that match volume data")
-# parser.add_argument("-a", "--affine", help="file stem of affine to look for to shortcut alignment", default=None)
-# parser.add_argument("-f", "--force", nargs="?", const=1, type=bool, default=False, help="re-export all found subjects")
-# args = parser.parse_args()
+def getROIStats(data, label_mask, roi_label):
+    """ Get statistics for a given ROI """
+    roi_stats = {}
+    roi_data = data[label_mask == roi_label]
 
-# pipelines = args.derivative_dir
-# participant_id = args.participant_id
-# session_id = args.session
+    roi_stats["mean"] = np.nanmean(roi_data)
+    roi_stats["std"] = np.nanstd(roi_data)
+    roi_stats["count"] = np.sum(~np.isnan(roi_data))
 
-# ref_img = args.ref_img
-# ref_label = args.ref_label
-# label_map = args.label_map
+    return roi_stats
 
-# label_aff = args.affine
-# redo = args.force
+# argparse setup
+parser = argparse.ArgumentParser(description="extract dMRI IDP stats from dipy fwDTI outputs.")
+parser.add_argument("-d", "--dataset", help='Derivatives directory contained processed dMRI data', required=True)
+parser.add_argument("-p", "--participant_id", help="participant ID", required=True)
+parser.add_argument("-s", "--session_id", help="participant session", default="01")
+parser.add_argument("-c", "--config_file", help="configuration file for registration parameters", required=True)
+parser.add_argument("-a", "--affine_only", help="use only affine registration", action="store_true")
+parser.add_argument("-t", "--test_reg_images", help="save test registration images", action="store_true")
 
-# dataset directory
-dataset = "/home/nikhil/projects/Parkinsons/nimhans/data/ylo/"
-pipeline_output_dir = f"{dataset}/derivatives/dmri-freewater/2.0.0/output/"
-pipeline_idps_dir = f"{dataset}/derivatives/dmri-freewater/2.0.0/idp/"
+args = parser.parse_args()
 
-bids_participant_list = ["sub-YLOPD31"] #,"sub-YLOPD321"]
-session_id = "01"
-save_test_reg_images = True
-test_reg_images_dir = "./test_reg_images"
+dataset = args.dataset ## dataset = "/home/nikhil/projects/Parkinsons/nimhans/data/ylo/"
+participant_id = args.participant_id
+session_id = args.session_id
+config_file = args.config_file
+affine_only = args.affine_only
+save_test_reg_images = args.test_reg_images
+
+# check if participant id has sub- prefix
+bids_participant = participant_id #"sub-YLOPD31"
+if not bids_participant.startswith("sub-"):
+    bids_participant = f"sub-{bids_participant}"
 
 # check is session id has sub- prefix
 if session_id.startswith("ses-"):
@@ -250,13 +228,38 @@ if session_id.startswith("ses-"):
     
 session = f"ses-{session_id}"
 
-# labels and reference volumes
-labels_dir = "/home/nikhil/projects/neuroinformatics_tools/sandbox/nipoppy-dmri-freewater/atlases/"
+# read the config file
+print(f"Loading configuration file: {config_file}")
+with open(config_file, 'r') as cf:
+    config = json.load(cf)
 
-ref_img = f"{labels_dir}/JHU-ICBM-FA-1mm.nii.gz"
-ref_label = f"{labels_dir}/JHU-ICBM-labels-1mm.nii.gz"
-label_map = f"{labels_dir}/JHU-ICBM-tract-label_desc.tsv"
-label_aff = "JHU"
+# preproc config
+preproc_pipeline_name = config.get("preproc_pipeline").get("name")
+preproc_pipeline_version = config.get("preproc_pipeline").get("version")
+preproc_pipeline_software = config.get("preproc_pipeline").get("software")
+
+print(f"Using preproc pipeline: {preproc_pipeline_name} - version: {preproc_pipeline_version}")
+
+# reference space config
+ref_img = config.get("reference_space").get("image_path")
+ref_label = config.get("reference_space").get("label_path")
+label_map = config.get("reference_space").get("label_desc_path")
+atlas_name = config.get("reference_space").get("name")
+
+# registration config
+affine_registration_params = config.get("affine_registration_params")
+
+# diffusion metric config
+diffusion_metrics = config.get("diffusion_metrics")
+
+# setup input / output paths
+pipeline_output_dir = f"{dataset}/derivatives/{preproc_pipeline_name}/{preproc_pipeline_version}/output/"
+pipeline_idps_dir = f"{dataset}/derivatives/{preproc_pipeline_name}/{preproc_pipeline_version}/idp/"
+
+if save_test_reg_images:    
+    test_reg_images_dir = "./test_reg_images"
+    Path(test_reg_images_dir).mkdir(parents=True, exist_ok=True)
+    print(f"Saving registration QC images for testing at {test_reg_images_dir} for sanity checks.")
 
 print("Running extraction of estimated features.")
 
@@ -275,138 +278,136 @@ label_map_df["roi_name"] = roi_labels
 # load the reference volume for coregistration
 ref = nib.load(ref_img)
 
-# get top level label for IDPs
-pname = "qsiprep-fw"
-pvers = "2.0.0"
-print(f"Pipeline - Version: {pname}-{pvers}")
+if affine_only:
+    reg_method = "affine" #  "affine" or "affine+syn"
+else:
+    reg_method = "affine+syn"
 
-tshell = "multi-shell" # ylo is all multi-shell
-reg_method = "syn" # "syn" or "affine" 
+warp = not affine_only
+
+print(f"Using registration method: {reg_method} --> warp={warp}")
 
 # build input / output paths
 datadir = pipeline_output_dir
 outsdir = pipeline_idps_dir
 
 # for every subject
-print(f" -- Extracting IDP data from: {pname}-{pvers}")
-for bids_participant in bids_participant_list:
+print(f" -- Extracting IDP data from: {preproc_pipeline_name}-{preproc_pipeline_version}")
+
+print(f" --  -- Processing: {bids_participant}")
+
+# create output file name
+outfile = Path(outsdir, f"{bids_participant}_{session}_{preproc_pipeline_name}-{preproc_pipeline_version}_{parc}_{reg_method}_idp.tsv")
+
+# load the files to extract
+print(f" --  -- Extracting data from: {bids_participant}")
+dpdir = Path(datadir, bids_participant, f"{session}", "dipy")
+
+mov = nib.load(Path(dpdir, f"{bids_participant}_{session}_model-dti_param-fa_map.nii.gz"))
+
+if save_test_reg_images:
+    nib.save(mov, f'{test_reg_images_dir}/sub_orig.nii.gz')
+    nib.save(ref, f'{test_reg_images_dir}/ref_orig.nii.gz')
+    nib.save(labs, f'{test_reg_images_dir}/label_orig.nii.gz')
+
+# linearly align dipy DTI FA (subject space) to the reference FA (JHU FA)
     
-    # check the sub prefix
-    if not bids_participant.startswith("sub-"):
-        bids_participant = f"sub-{bids_participant}"
+print(" --  --  -- Starting alignment and resampling.")  
+# path to subject affine file
+sub_aff_dir = f"{pipeline_output_dir}/{bids_participant}/{session}/affine/"
+subj_aff_stem = f"{bids_participant}_{session}_{atlas_name}_sub2ref.txt"
+subj_aff_path = Path(sub_aff_dir, subj_aff_stem)
 
-    print(f" --  -- Processing: {bids_participant}")
+# if the affine file exists, load it
+sub2ref_affine = None
+if subj_aff_path.exists():
+    print(f" --  --  -- Using existing affine: {subj_aff_stem}")
+    sub2ref_affine = np.loadtxt(subj_aff_path)
 
-    # create output file name
-    outfile = Path(outsdir, f"{bids_participant}_{session}_{pname}-{pvers}_{parc}_{reg_method}_idp.tsv")
+# path to subject warp file
+sub_warp_dir = f"{pipeline_output_dir}/{bids_participant}/{session}/warp/"
+subj_warp_stem = f"{bids_participant}_{session}_{atlas_name}_sub2ref_mapping.nii.gz"
+subj_warp_path = Path(sub_warp_dir, subj_warp_stem)
 
-    # load the files to extract
-    print(f" --  -- Extracting data from: {bids_participant}")
-    dpdir = Path(datadir, bids_participant, f"{session}", "dipy")
-    spdir = Path(datadir, bids_participant, f"{session}", "scilpy")
+# load existing warp if exists
+sub2ref_mapping = None
+if warp & (subj_warp_path.exists()):
+    print(f"Using existing warp from: {subj_warp_path}")        
+    sub2ref_mapping = read_mapping(str(subj_warp_path), mov, ref)
 
-    mov = nib.load(Path(dpdir, f"{bids_participant}_{session}_model-dti_param-fa_map.nii.gz"))
+# # align and resample the moving image to the reference
+sub_affined, sub_warped, label_inverse_affined, label_inverse_warped, sub2ref_affine, sub2ref_mapping = align_and_resample(
+    mov, 
+    ref, 
+    labs, 
+    affine_config=affine_registration_params,
+    syn_config=None, 
+    sub2ref_affine=sub2ref_affine, 
+    sub2ref_mapping=sub2ref_mapping, 
+    warp=warp
+    )
 
-    if save_test_reg_images:
-        nib.save(mov, f'{test_reg_images_dir}/sub_orig.nii.gz')
-        nib.save(ref, f'{test_reg_images_dir}/ref_orig.nii.gz')
-        nib.save(labs, f'{test_reg_images_dir}/label_orig.nii.gz')
+print(" --  --  -- Alignment and resampling complete.")
+# save the affine to disk
+if not subj_aff_path.exists():
+    Path(sub_aff_dir).mkdir(parents=True, exist_ok=True)
+    print(f" --  --  -- Saving affine to: {subj_aff_path}")
+    np.savetxt(subj_aff_path, sub2ref_affine)
+    
+# save warps
+if warp & (not subj_warp_path.exists()):
+    Path(sub_warp_dir).mkdir(parents=True, exist_ok=True)
+    print(f"Saving warp to: {subj_warp_path}")
+    write_mapping(sub2ref_mapping, subj_warp_path)
 
-    # linearly align dipy DTI FA (dpdtfa) to input ref
-    if reg_method == "affine":
-        
-        # path to subject affine file
-        sub_aff_dir = f"{pipeline_output_dir}/{bids_participant}/{session}/affine/"
-        subj_aff_stem = f"{bids_participant}_{session}_{label_aff}_sub2ref.txt"
-        subj_aff_path = Path(sub_aff_dir, subj_aff_stem)
+# save the transformed images
+if save_test_reg_images:
+    nib.save(sub_affined, f'{test_reg_images_dir}/sub_affined.nii.gz')
+    nib.save(label_inverse_affined, f'{test_reg_images_dir}/label_inverse_affined.nii.gz')
+    if warp:
+        nib.save(sub_warped, f'{test_reg_images_dir}/sub_warped.nii.gz')
+        nib.save(label_inverse_warped, f'{test_reg_images_dir}/label_inverse_warped.nii.gz')
+    
+# get resampled labels
+if warp:
+    tldat = label_inverse_warped.get_fdata().astype(int)
+else:
+    tldat = label_inverse_affined.get_fdata().astype(int)
 
-        # if the affine file exists, load it
-        sub2ref = None
-        if subj_aff_path.exists():
-            print(f" --  --  -- Using existing affine: {subj_aff_stem}")
-            sub2ref = np.loadtxt(subj_aff_path)
+# load and prep data for extraction
+# diff_params = ["fa","md","ad","nrmse","residual"]
+diff_params = diffusion_metrics.keys()
+print(f" --  --  -- Extracting diffusion metrics: {diff_params}")
 
-        # align and resample the moving image to the reference
-        sub_transformed, ref_transformed, label_transformed, sub2ref = align_and_resample(mov, ref, labs, sub2ref)
+# load data files
+print(" --  --  -- Loading data files for extraction.")   
+summary_df = pd.DataFrame() 
+for diff_p in diff_params:
+    diff_param_map, _ = load_nii(Path(dpdir, f"{bids_participant}_{session}_model-dti_param-{diff_p}_map.nii.gz"), loader="dipy")
+    diff_FW_param_map, _ = load_nii(Path(dpdir, f"{bids_participant}_{session}_model-fwdti_param-{diff_p}_map.nii.gz"), loader="dipy")
 
-        # save the affine to disk
-        if not subj_aff_path.exists():
-            sub_aff_dir.mkdir(parents=True, exist_ok=True)
-            print(f" --  --  -- Saving affine to: {subj_aff_path}")
-            np.savetxt(subj_aff_path, sub2ref)
+    # for every roi label, get the mean value w/in the labels
+    dti_roi_df = pd.DataFrame(columns=["roi_idx","model","param","mean_value","std_value","voxel_count"])
+    fwdti_roi_df = pd.DataFrame(columns=["roi_idx","model","param","mean_value","std_value","voxel_count"])
+    for idx, roi in enumerate(labels):
+        # Default
+        dti_val_mean, dti_val_std, dti_val_count = getROIStats(diff_param_map, tldat, roi)
+        dti_roi_df.loc[idx] = [roi, "dti", diff_p, dti_val_mean, dti_val_std, dti_val_count]
+        # FW
+        FW_val_mean, FW_val_std, FW_val_count = getROIStats(diff_FW_param_map, tldat, roi)
+        fwdti_roi_df.loc[idx] = [roi, "fwdti", diff_p, FW_val_mean, FW_val_std, FW_val_count]
 
-        if save_test_reg_images:
-            # save the transformed images
-            nib.save(sub_transformed, f'{test_reg_images_dir}/sub_affine_transformed.nii.gz')
-            nib.save(ref_transformed, f'{test_reg_images_dir}/ref_affine_transformed.nii.gz')
-            nib.save(label_transformed, f'{test_reg_images_dir}/label_affine_transformed.nii.gz')
+    roi_df = pd.concat([dti_roi_df,fwdti_roi_df], axis=0)
+    summary_df = pd.concat([summary_df, roi_df])
 
-    elif reg_method == "syn":
+summary_df["participant_id"] = bids_participant
+summary_df["pipeline"] = f"{preproc_pipeline_name}-{preproc_pipeline_version}"
+summary_df["software"] = preproc_pipeline_software
+summary_df["registration"] = reg_method
+summary_df = pd.merge(summary_df,label_map_df,on="roi_idx",how="left")
 
-        # path to subject warp file
-        sub_warp_dir = f"{pipeline_output_dir}/{bids_participant}/{session}/warp/"
-        subj_warp_stem = f"{bids_participant}_{session}_{label_aff}_sub2ref_warp.nii.gz"
-        subj_warp_path = Path(sub_warp_dir, subj_warp_stem)
-
-        # load existing warp if exists
-        sub2ref = None
-        if subj_warp_path.exists():
-            print(f"Using existing warp from: {subj_warp_path}")
-            
-            sub2ref = read_mapping(str(subj_warp_path), mov, ref)
-
-        # syn registration
-        print("Syn registration started")
-        sub_transformed, ref_transformed, label_transformed, sub2ref = warp_and_resample(mov, ref, labs, sub2ref)
-        print("Syn registration complete")
-
-        # save warps
-        if not subj_warp_path.exists():
-            print(f"Saving warp to: {subj_warp_path}")
-            write_mapping(sub2ref, subj_warp_path)
-
-        if save_test_reg_images:
-            nib.save(sub_transformed, f'{test_reg_images_dir}/sub_syn_transformed.nii.gz')
-            nib.save(ref_transformed, f'{test_reg_images_dir}/ref_syn_transformed.nii.gz')
-            nib.save(label_transformed, f'{test_reg_images_dir}/label_syn_transformed.nii.gz')
-
-        
-    # get resampled labels
-    tldat = label_transformed.get_fdata()
-
-    # load and prep data for extraction
-    diff_params = ["fa","md","ad","nrmse","residual"]
-
-    # load data files
-    print(" --  --  -- Loading data files for extraction.")   
-    summary_df = pd.DataFrame() 
-    for diff_p in diff_params:
-        diff_param_map = tryLoad(Path(dpdir, f"{bids_participant}_{session}_model-dti_param-{diff_p}_map.nii.gz"), label_transformed)
-        diff_FW_param_map = tryLoad(Path(dpdir, f"{bids_participant}_{session}_model-fwdti_param-{diff_p}_map.nii.gz"), label_transformed)
-
-        # for every roi label, get the mean value w/in the labels
-        dti_roi_df = pd.DataFrame(columns=["roi_idx","model","param","mean_value"])
-        fwdti_roi_df = pd.DataFrame(columns=["roi_idx","model","param","mean_value"])
-        for idx, roi in enumerate(labels):
-            # Default
-            dti_avg_val = nanAvg(diff_param_map[tldat == roi])
-            dti_roi_df.loc[idx] = [roi, "dti", diff_p, dti_avg_val]
-            # FW
-            FW_avg_val = nanAvg(diff_FW_param_map[tldat == roi])
-            fwdti_roi_df.loc[idx] = [roi, "fwdti", diff_p, dti_avg_val]
-
-        roi_df = pd.concat([dti_roi_df,fwdti_roi_df], axis=0)
-        summary_df = pd.concat([summary_df, roi_df])
-
-    summary_df["participant_id"] = bids_participant
-    summary_df["pipeline"] = f"{pname}-{pvers}"
-    summary_df["software"] = "dipy"
-    summary_df["shell"] = tshell
-    summary_df["registration"] = reg_method
-    summary_df = pd.merge(summary_df,label_map_df,on="roi_idx",how="left")
-
-    # write the dataframe to disk
-    summary_df.to_csv(outfile, index=False, header=True, sep="\t")
-    print(f" --  -- Saved {bids_participant}_{session} IDPs to disk.")
+# write the dataframe to disk
+summary_df.to_csv(outfile, index=False, header=True, sep="\t")
+print(f" --  -- Saved {bids_participant}_{session} IDPs to {outfile}.")
 
 print("Done.")
