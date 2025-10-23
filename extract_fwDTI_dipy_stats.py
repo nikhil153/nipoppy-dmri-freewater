@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy.spatial.distance import dice
 
 import json
 import nibabel as nib
@@ -93,11 +94,11 @@ def align_and_resample(mov, ref, label=None, affine_config=None, syn_config=None
 
     # compute non-linear warp if specified
     if warp:
-        logger.info(" --  --  -- Computing non-linear warp registration.")
         if sub2ref_mapping is not None:
             logger.info(" --  --  -- Using provided warp for registration.")
 
         else:
+            logger.info(" --  --  -- Computing non-linear registration.")
             # still using the orginal moving image but with affine pre-alignment
             _, sub2ref_mapping = syn_registration(
                 mov,
@@ -116,24 +117,47 @@ def align_and_resample(mov, ref, label=None, affine_config=None, syn_config=None
 
     # inverse align the label image to the subject space and resample
     if label is not None:
-        if warp:         
-            # first, transform the ref label data using the diffeomorphic map   
+        label_inverse_affined_data = affmap.transform_inverse(label.get_fdata(), interpolation='nearest')
+
+        if warp:          
             label_inverse_warped_data = sub2ref_mapping.transform_inverse(label.get_fdata(), interpolation='nearest')  
-            label_inverse_warped = nib.Nifti1Image(label_inverse_warped_data, mov.affine)
-
-            # then, apply the inverse affine transform
-            label_inverse_affined_data = affmap.transform_inverse(label_inverse_warped_data, interpolation='nearest')          
+            label_inverse = nib.Nifti1Image(label_inverse_warped_data, mov.affine) 
+            
         else:
-            label_inverse_warped = None
-            label_inverse_affined_data = affmap.transform_inverse(label.get_fdata(), interpolation='nearest')
+            label_inverse = nib.Nifti1Image(label_inverse_affined_data, mov.affine) 
 
-        label_inverse_affined = nib.Nifti1Image(label_inverse_affined_data, mov.affine) 
+        # Sanity check: apply the forward transform to see if we get back the original label           
+        label_affine_looped_data = affmap.transform(label_inverse_affined_data, interpolation='nearest')
 
+        # check overlap
+        label_binary = (label.get_fdata() > 0).astype(int)        
+        label_affine_looped_binary = (label_affine_looped_data > 0).astype(int)
+
+        dice_label_aff_loop = 1 - dice(label_binary.flatten(), label_affine_looped_binary.flatten())
+
+        logger.info(f" --  --  -- dice_label_aff_loop overlap (should be close to 1.0): {dice_label_aff_loop:.3f}")
+
+        dice_score = {"label_aff_loop": dice_label_aff_loop}
+        if warp:
+            label_warp_looped_data = sub2ref_mapping.transform(label_inverse_warped_data, interpolation='nearest')
+            label_warp_looped_binary = (label_warp_looped_data > 0).astype(int)
+            dice_label_warp_loop = 1 - dice(label_binary.flatten(), label_warp_looped_binary.flatten())
+            logger.info(f" --  --  -- dice_label_warp_loop overlap (should be close to 1.0): {dice_label_warp_loop:.3f}")
+
+            # compare inverse affine vs inverse warp
+            label_inverse_affined_binary = (label_inverse_affined_data > 0).astype(int)
+            label_inverse_warped_binary = (label_inverse_warped_data > 0).astype(int)
+            dice_label_aff_warp_inverse = 1 - dice(label_inverse_affined_binary.flatten(), label_inverse_warped_binary.flatten())
+
+            logger.info(f" --  --  -- dice_label_aff_warp_inverse overlap (should be between 0.7 - {dice_label_aff_loop:.2f}): {dice_label_aff_warp_inverse:.3f}")
+
+            dice_score["label_warp_loop"] = dice_label_warp_loop
+            dice_score["aff_warp_inverse"] = dice_label_aff_warp_inverse
+        
     else:
-        label_inverse_affined = None
-        label_inverse_warped = None
+        label_inverse = None
 
-    return sub_affined, sub_warped, label_inverse_affined, label_inverse_warped, sub2ref_affine, sub2ref_mapping
+    return sub_affined, sub_warped, label_inverse, sub2ref_affine, sub2ref_mapping, dice_score
 
 def loadLabels(f_label_vol, f_label_map):
 
@@ -289,7 +313,7 @@ label_map_df["roi_name"] = roi_labels
 ref = nib.load(ref_img)
 
 if affine_only:
-    reg_method = "affine" #  "affine" or "affine+syn"
+    reg_method = "affine" 
 else:
     reg_method = "affine+syn"
 
@@ -328,28 +352,29 @@ sub_aff_dir = f"{pipeline_output_dir}/{bids_participant}/{session}/affine/"
 subj_aff_stem = f"{bids_participant}_{session}_{atlas_name}_sub2ref.txt"
 subj_aff_path = Path(sub_aff_dir, subj_aff_stem)
 
-# if the affine file exists, load it
-sub2ref_affine = None
-if subj_aff_path.exists():
-    logger.info(f" --  --  -- Using existing affine: {subj_aff_stem}")
-    sub2ref_affine = np.loadtxt(subj_aff_path)
-
 # path to subject warp file
 sub_warp_dir = f"{pipeline_output_dir}/{bids_participant}/{session}/warp/"
 subj_warp_stem = f"{bids_participant}_{session}_{atlas_name}_sub2ref_mapping.nii.gz"
 subj_warp_path = Path(sub_warp_dir, subj_warp_stem)
 
-# load existing warp if exists
+# if the affine file exists, load it
+# load the warp ONLY if affine exists since we don't know the prealign otherwise
+sub2ref_affine = None
 sub2ref_mapping = None
-if warp & (subj_warp_path.exists()):
-    logger.info(f"Using existing warp from: {subj_warp_path}")        
-    # Need to specify prealign as affine since it was used during syn computation
-    # For some reason it requires the inverse affine while reading the mapping
-    # see: https://github.com/dipy/dipy/discussions/3272
-    sub2ref_mapping = read_mapping(str(subj_warp_path), mov, ref, prealign=np.linalg.inv(sub2ref_affine))
+if subj_aff_path.exists():
+    logger.info(f" --  --  -- Using existing affine: {subj_aff_stem}")
+    sub2ref_affine = np.loadtxt(subj_aff_path)
+
+    # load existing warp if exists
+    if warp & (subj_warp_path.exists()):
+        logger.info(f"Using existing warp from: {subj_warp_path}")        
+        # Need to specify prealign as affine since it was used during syn computation
+        # For some reason it requires the inverse affine while reading the mapping
+        # see: https://github.com/dipy/dipy/discussions/3272
+        sub2ref_mapping = read_mapping(str(subj_warp_path), mov, ref, prealign=np.linalg.inv(sub2ref_affine))
 
 # align and resample the moving image to the reference
-sub_affined, sub_warped, label_inverse_affined, label_inverse_warped, sub2ref_affine, sub2ref_mapping = align_and_resample(
+sub_affined, sub_warped, label_inverse, sub2ref_affine, sub2ref_mapping, dice_score = align_and_resample(
     mov, 
     ref, 
     labs, 
@@ -359,6 +384,16 @@ sub_affined, sub_warped, label_inverse_affined, label_inverse_warped, sub2ref_af
     sub2ref_mapping=sub2ref_mapping, 
     warp=warp
     )
+
+logger.debug(f"shape of original images: mov: {mov.shape}, ref: {ref.shape}, label: {labs.shape}")
+
+if warp:
+    logger.debug(f"Shape of the sub transforms: sub_affined: {sub_affined.shape}, sub_warped: {sub_warped.shape}")
+    logger.debug(f"shape of warps: forward: {sub2ref_mapping.forward.shape}, inverse: {sub2ref_mapping.backward.shape}")
+else:
+    logger.debug(f"Shape of the sub transforms: sub_affined: {sub_affined.shape}")
+
+logger.debug(f"shape of label resampled images: inverse_affined: {label_inverse.shape}")
 
 logger.info(" --  --  -- Alignment and resampling complete.")
 
@@ -377,16 +412,17 @@ if warp & (not subj_warp_path.exists()):
 # save the transformed images
 if save_test_reg_images:
     nib.save(sub_affined, f'{test_reg_images_dir}/sub_affined.nii.gz')
-    nib.save(label_inverse_affined, f'{test_reg_images_dir}/label_inverse_affined.nii.gz')
     if warp:
         nib.save(sub_warped, f'{test_reg_images_dir}/sub_warped.nii.gz')
-        nib.save(label_inverse_warped, f'{test_reg_images_dir}/label_inverse_warped.nii.gz')
+        nib.save(label_inverse, f'{test_reg_images_dir}/label_inverse_warped.nii.gz')
+    else:
+        nib.save(label_inverse, f'{test_reg_images_dir}/label_inverse_affined.nii.gz')
     
 # get resampled labels
 if warp:
-    tldat = label_inverse_warped.get_fdata().astype(int)
+    tldat = label_inverse.get_fdata().astype(int)
 else:
-    tldat = label_inverse_affined.get_fdata().astype(int)
+    tldat = label_inverse.get_fdata().astype(int)
 
 # load and prep data for extraction
 # diff_params = ["fa","md"]
