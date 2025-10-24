@@ -17,6 +17,9 @@ from dipy.align.imaffine import AffineMap
 from dipy.io.image import load_nifti
 from dipy.viz import regtools
 
+# import disptools.displacements as displacements 
+import SimpleITK as sitk
+
 
 # configure logger
 logging.basicConfig(
@@ -24,6 +27,48 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+def jacobian_to_volume_change(jacobian: sitk.Image, epsilon: float = 1e-5) -> sitk.Image:
+    r""" Convert a Jacobian map to a volume change map (source: https://github.com/m-pilia/disptools copied here to avoid dependancy).
+
+    A volume change map is defined as
+
+    .. math::
+        VC[f](x) =
+        \begin{cases}
+            1 - \frac{1}{J[f](x)}  \quad &J[f](x) \in (0,1) \\
+            J[f](x) - 1            \quad &J[f](x) \ge 1
+        \end{cases}
+
+    Parameters
+    ----------
+    jacobian : sitk.Image
+        Input Jacobian map.
+    epsilon : float
+        Lower threshold for the Jacobian; any value below
+        `epsilon` will be replaced with `epsilon`.
+
+    Returns
+    -------
+    sitk.Image
+        Volume change map associated to the input Jacobian.
+    """
+
+    data = sitk.GetArrayFromImage(jacobian)
+    processed = np.empty(data.shape, dtype=data.dtype)
+
+    ind_expa = data >= 1.0
+    ind_comp = data < 1.0
+    ind_sing = data <= epsilon
+
+    data[ind_sing] = epsilon
+
+    processed[ind_expa] = data[ind_expa] - 1.0
+    processed[ind_comp] = 1.0 - (1.0 / data[ind_comp])
+
+    result = sitk.GetImageFromArray(processed)
+    # result.CopyInformation(jacobian) # Not needed for volume calculations
+    return result   
 
 def align_and_resample(mov, ref, label=None, affine_config=None, syn_config=None, sub2ref_affine=None, sub2ref_mapping=None, warp=True):
     """
@@ -140,7 +185,7 @@ def align_and_resample(mov, ref, label=None, affine_config=None, syn_config=None
         dice_score = {"label_aff_loop": dice_label_aff_loop}
         if warp:
             label_warp_looped_data = sub2ref_mapping.transform(label_inverse_warped_data, interpolation='nearest')
-            label_warp_looped_binary = (label_warp_looped_data > 0).astype(int)
+            label_warp_looped_binary = (label_warp_looped_data > 0).astype(int)            
             dice_label_warp_loop = 1 - dice(label_binary.flatten(), label_warp_looped_binary.flatten())
             logger.info(f" --  --  -- dice_label_warp_loop overlap (should be close to 1.0): {dice_label_warp_loop:.3f}")
 
@@ -154,10 +199,45 @@ def align_and_resample(mov, ref, label=None, affine_config=None, syn_config=None
             dice_score["label_warp_loop"] = dice_label_warp_loop
             dice_score["aff_warp_inverse"] = dice_label_aff_warp_inverse
         
+            # mixed transform loops
+            label_inverse_warp_affine_looped_data = affmap.transform(label_inverse_warped_data, interpolation='nearest')
+            label_inverse_affine_warp_looped_data = sub2ref_mapping.transform(label_inverse_affined_data, interpolation='nearest')
+            label_inverse_warp_affine_looped_binary = (label_inverse_warp_affine_looped_data > 0).astype(int)
+            label_inverse_affine_warp_looped_binary = (label_inverse_affine_warp_looped_data > 0).astype(int)
+
+            dice_label_inverse_warp_affine_loop = 1 - dice(label_binary.flatten(), label_inverse_warp_affine_looped_binary.flatten())
+            logger.info(f" --  --  -- dice_label_warp_affine_loop overlap (should be between 0.7 - {dice_label_aff_loop:.2f}): {dice_label_inverse_warp_affine_loop:.3f}")
+
+            dice_label_inverse_affine_warp_loop = 1 - dice(label_binary.flatten(), label_inverse_affine_warp_looped_binary.flatten())
+            logger.info(f" --  --  -- dice_label_affine_warp_loop overlap (should be between 0.7 - {dice_label_aff_loop:.2f}): {dice_label_inverse_affine_warp_loop:.3f}")
+
+            dice_score["label_inverse_warp_affine_loop"] = dice_label_inverse_warp_affine_loop
+            dice_score["label_inverse_affine_warp_loop"] = dice_label_inverse_affine_warp_loop
+
+            # Calculate total jacobian determinant statistics
+            
+            # generate simpleitk images for the displacement field
+            sitk_disp = sitk.GetImageFromArray(sub2ref_mapping.forward.astype(np.float32))
+            jacobian_det = sitk.DisplacementFieldJacobianDeterminant(sitk_disp)
+            # vol_change = displacements.jacobian_to_volume_change(jacobian_det)
+            vol_change = jacobian_to_volume_change(jacobian_det)
+            mean_jacobian = np.mean(vol_change)
+            std_jacobian = np.std(vol_change)
+            total_jacobian = np.sum(vol_change)
+            logger.info(f" --  --  -- Jacobian vol change stats - mean: {mean_jacobian:.3f}, std: {std_jacobian:.3f}, total: {total_jacobian:.3f}")
+
+            jacobian_stats = {
+                "mean": mean_jacobian,
+                "std": std_jacobian,
+                "total": total_jacobian
+            }
+
+            qc_metrics = {"dice_scores": dice_score, "jacobian_stats": jacobian_stats }
+            
     else:
         label_inverse = None
 
-    return sub_affined, sub_warped, label_inverse, sub2ref_affine, sub2ref_mapping, dice_score
+    return sub_affined, sub_warped, label_inverse, sub2ref_affine, sub2ref_mapping, qc_metrics
 
 def loadLabels(f_label_vol, f_label_map):
 
@@ -179,10 +259,7 @@ def loadLabels(f_label_vol, f_label_map):
     if "name" not in label_map_df.columns:
         raise ValueError("Text labels file does not contain 'name' column.")
     
-    
     labels_in_map = label_map_df["label"].to_list()
-    
-    # print the text labels
     logger.info(f" -- Found {len(labels_in_map)} labels in the text file: {f_label_map}")
      
     # check if all the labels in the volume are in the text file
@@ -371,10 +448,11 @@ if subj_aff_path.exists():
         # Need to specify prealign as affine since it was used during syn computation
         # For some reason it requires the inverse affine while reading the mapping
         # see: https://github.com/dipy/dipy/discussions/3272
+        # sub2ref_mapping = read_mapping(str(subj_warp_path), mov, ref)
         sub2ref_mapping = read_mapping(str(subj_warp_path), mov, ref, prealign=np.linalg.inv(sub2ref_affine))
 
 # align and resample the moving image to the reference
-sub_affined, sub_warped, label_inverse, sub2ref_affine, sub2ref_mapping, dice_score = align_and_resample(
+sub_affined, sub_warped, label_inverse, sub2ref_affine, sub2ref_mapping, qc_metrics = align_and_resample(
     mov, 
     ref, 
     labs, 
@@ -456,10 +534,32 @@ summary_df["participant_id"] = bids_participant
 summary_df["pipeline"] = f"{preproc_pipeline_name}-{preproc_pipeline_version}"
 summary_df["software"] = preproc_pipeline_software
 summary_df["registration"] = reg_method
+
 summary_df = pd.merge(summary_df,label_map_df,on="roi_idx",how="left")
 
 # write the dataframe to disk
 summary_df.to_csv(outfile, index=False, header=True, sep="\t")
 logger.info(f" --  -- Saved {bids_participant}_{session} IDPs to {outfile}.")
+
+# Save qc_metrics to the dataframe 
+qc_df = pd.DataFrame()
+dice_score = qc_metrics.get("dice_scores", {})
+jacobian_stats = qc_metrics.get("jacobian_stats", {})
+
+qc_df["bids_participant_id"] = [bids_participant]
+qc_df["session"] = [session]
+qc_df["pipeline"] = [f"{preproc_pipeline_name}-{preproc_pipeline_version}"]
+qc_df["software"] = [preproc_pipeline_software]
+qc_df["registration"] = [reg_method]    
+
+for key, value in dice_score.items():
+    qc_df[f"dice_{key}"] = value
+
+for key, value in jacobian_stats.items():
+    qc_df[f"Jacobian_{key}"] = value
+
+qc_outfile = Path(outsdir, f"{bids_participant}_{session}_{preproc_pipeline_name}-{preproc_pipeline_version}_{parc}_{reg_method}_qc-metrics.tsv")
+qc_df.to_csv(qc_outfile, index=False, header=True, sep="\t")
+logger.info(f" --  -- Saved {bids_participant}_{session} QC metrics to {qc_outfile}.")
 
 logger.info("IDP extraction complete!!")
