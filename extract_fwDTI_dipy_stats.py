@@ -367,6 +367,9 @@ diffusion_metrics = config.get("diffusion_metrics")
 pipeline_output_dir = f"{dataset}/derivatives/{preproc_pipeline_name}/{preproc_pipeline_version}/output/"
 pipeline_idps_dir = f"{dataset}/derivatives/{preproc_pipeline_name}/{preproc_pipeline_version}/idp/"
 
+# create output dir if not exists
+Path(pipeline_idps_dir).mkdir(parents=True, exist_ok=True)
+
 if save_test_reg_images:    
     test_reg_images_dir = "./test_reg_images"
     Path(test_reg_images_dir).mkdir(parents=True, exist_ok=True)
