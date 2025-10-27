@@ -9,9 +9,9 @@
     {
         "name": "JHU-ICBM-FA-1mm",
         "type": "FA",
-        "image_path": "/home/nikhil/projects/neuroinformatics_tools/sandbox/nipoppy-dmri-freewater/atlases/JHU-ICBM-FA-1mm.nii.gz",
-        "label_path": "/home/nikhil/projects/neuroinformatics_tools/sandbox/nipoppy-dmri-freewater/atlases/JHU-ICBM-labels-1mm.nii.gz",
-        "label_desc_path": "/home/nikhil/projects/neuroinformatics_tools/sandbox/nipoppy-dmri-freewater/atlases/JHU-ICBM-tract-label_desc.tsv"
+        "image_path": "/home/nikhil/projects/neuroinformatics_tools/nipoppy-dmri-freewater/atlases/JHU-ICBM-FA-1mm.nii.gz",
+        "label_path": "/home/nikhil/projects/neuroinformatics_tools/nipoppy-dmri-freewater/atlases/JHU-ICBM-labels-1mm.nii.gz",
+        "label_desc_path": "/home/nikhil/projects/neuroinformatics_tools/nipoppy-dmri-freewater/atlases/JHU-ICBM-tract-label_desc.tsv"
     },
     "affine_registration_params":
     {
@@ -25,7 +25,11 @@
     },
     "diffeomorphic_registration_params":
     {
-        "type": "syn"
+        "type": "syn",
+        "qc_types": {
+            "dice": true,
+            "jacobian": true
+        }
     },
     "diffusion_metrics":
     {

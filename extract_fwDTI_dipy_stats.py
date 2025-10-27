@@ -70,7 +70,8 @@ def jacobian_to_volume_change(jacobian: sitk.Image, epsilon: float = 1e-5) -> si
     # result.CopyInformation(jacobian) # Not needed for volume calculations
     return result   
 
-def align_and_resample(mov, ref, label=None, affine_config=None, syn_config=None, sub2ref_affine=None, sub2ref_mapping=None, warp=True):
+def align_and_resample(mov, ref, label=None, affine_config=None, syn_config=None, sub2ref_affine=None, sub2ref_mapping=None, warp=True, 
+                       compute_dice_qc_metrics=True, compute_jacobian=False):
     """
     Registration (linear + non-linear) of moving image to reference image and resampling of labels in the reference space.
     Wrapping this into a single function for avoiding messy transform calls.
@@ -171,55 +172,60 @@ def align_and_resample(mov, ref, label=None, affine_config=None, syn_config=None
         else:
             label_inverse = nib.Nifti1Image(label_inverse_affined_data, mov.affine) 
 
-        # Sanity check: apply the forward transform to see if we get back the original label           
-        label_affine_looped_data = affmap.transform(label_inverse_affined_data, interpolation='nearest')
+        # QC metrics - check the overlap by looping back the transforms
+        if compute_dice_qc_metrics:
+            logger.info(" --  --  -- Computing QC metrics for registration.")
 
-        # check overlap
-        label_binary = (label.get_fdata() > 0).astype(int)        
-        label_affine_looped_binary = (label_affine_looped_data > 0).astype(int)
+            label_affine_looped_data = affmap.transform(label_inverse_affined_data, interpolation='nearest')
 
-        dice_label_aff_loop = 1 - dice(label_binary.flatten(), label_affine_looped_binary.flatten())
+            # check overlap
+            label_binary = (label.get_fdata() > 0).astype(int)        
+            label_affine_looped_binary = (label_affine_looped_data > 0).astype(int)
 
-        logger.info(f" --  --  -- dice_label_aff_loop overlap (should be close to 1.0): {dice_label_aff_loop:.3f}")
+            dice_label_aff_loop = 1 - dice(label_binary.flatten(), label_affine_looped_binary.flatten())
 
-        dice_score = {"label_aff_loop": dice_label_aff_loop}
-        if warp:
-            label_warp_looped_data = sub2ref_mapping.transform(label_inverse_warped_data, interpolation='nearest')
-            label_warp_looped_binary = (label_warp_looped_data > 0).astype(int)            
-            dice_label_warp_loop = 1 - dice(label_binary.flatten(), label_warp_looped_binary.flatten())
-            logger.info(f" --  --  -- dice_label_warp_loop overlap (should be close to 1.0): {dice_label_warp_loop:.3f}")
+            logger.info(f" --  --  -- dice_label_aff_loop overlap (should be close to 1.0): {dice_label_aff_loop:.3f}")
 
-            # compare inverse affine vs inverse warp
-            label_inverse_affined_binary = (label_inverse_affined_data > 0).astype(int)
-            label_inverse_warped_binary = (label_inverse_warped_data > 0).astype(int)
-            dice_label_aff_warp_inverse = 1 - dice(label_inverse_affined_binary.flatten(), label_inverse_warped_binary.flatten())
+            dice_qc_metrics = {"label_aff_loop": dice_label_aff_loop}
+            if warp:
+                label_warp_looped_data = sub2ref_mapping.transform(label_inverse_warped_data, interpolation='nearest')
+                label_warp_looped_binary = (label_warp_looped_data > 0).astype(int)            
+                dice_label_warp_loop = 1 - dice(label_binary.flatten(), label_warp_looped_binary.flatten())
+                logger.info(f" --  --  -- dice_label_warp_loop overlap (should be close to 1.0): {dice_label_warp_loop:.3f}")
 
-            logger.info(f" --  --  -- dice_label_aff_warp_inverse overlap (should be between 0.7 - {dice_label_aff_loop:.2f}): {dice_label_aff_warp_inverse:.3f}")
+                # compare inverse affine vs inverse warp
+                label_inverse_affined_binary = (label_inverse_affined_data > 0).astype(int)
+                label_inverse_warped_binary = (label_inverse_warped_data > 0).astype(int)
+                dice_label_aff_warp_inverse = 1 - dice(label_inverse_affined_binary.flatten(), label_inverse_warped_binary.flatten())
 
-            dice_score["label_warp_loop"] = dice_label_warp_loop
-            dice_score["aff_warp_inverse"] = dice_label_aff_warp_inverse
-        
-            # mixed transform loops
-            label_inverse_warp_affine_looped_data = affmap.transform(label_inverse_warped_data, interpolation='nearest')
-            label_inverse_affine_warp_looped_data = sub2ref_mapping.transform(label_inverse_affined_data, interpolation='nearest')
-            label_inverse_warp_affine_looped_binary = (label_inverse_warp_affine_looped_data > 0).astype(int)
-            label_inverse_affine_warp_looped_binary = (label_inverse_affine_warp_looped_data > 0).astype(int)
+                logger.info(f" --  --  -- dice_label_aff_warp_inverse overlap (should be between 0.7 - {dice_label_aff_loop:.2f}): {dice_label_aff_warp_inverse:.3f}")
 
-            dice_label_inverse_warp_affine_loop = 1 - dice(label_binary.flatten(), label_inverse_warp_affine_looped_binary.flatten())
-            logger.info(f" --  --  -- dice_label_warp_affine_loop overlap (should be between 0.7 - {dice_label_aff_loop:.2f}): {dice_label_inverse_warp_affine_loop:.3f}")
-
-            dice_label_inverse_affine_warp_loop = 1 - dice(label_binary.flatten(), label_inverse_affine_warp_looped_binary.flatten())
-            logger.info(f" --  --  -- dice_label_affine_warp_loop overlap (should be between 0.7 - {dice_label_aff_loop:.2f}): {dice_label_inverse_affine_warp_loop:.3f}")
-
-            dice_score["label_inverse_warp_affine_loop"] = dice_label_inverse_warp_affine_loop
-            dice_score["label_inverse_affine_warp_loop"] = dice_label_inverse_affine_warp_loop
-
-            # Calculate total jacobian determinant statistics
+                dice_qc_metrics["label_warp_loop"] = dice_label_warp_loop
+                dice_qc_metrics["aff_warp_inverse"] = dice_label_aff_warp_inverse
             
+                # mixed transform loops
+                label_inverse_warp_affine_looped_data = affmap.transform(label_inverse_warped_data, interpolation='nearest')
+                label_inverse_affine_warp_looped_data = sub2ref_mapping.transform(label_inverse_affined_data, interpolation='nearest')
+                label_inverse_warp_affine_looped_binary = (label_inverse_warp_affine_looped_data > 0).astype(int)
+                label_inverse_affine_warp_looped_binary = (label_inverse_affine_warp_looped_data > 0).astype(int)
+
+                dice_label_inverse_warp_affine_loop = 1 - dice(label_binary.flatten(), label_inverse_warp_affine_looped_binary.flatten())
+                logger.info(f" --  --  -- dice_label_warp_affine_loop overlap (should be between 0.7 - {dice_label_aff_loop:.2f}): {dice_label_inverse_warp_affine_loop:.3f}")
+
+                dice_label_inverse_affine_warp_loop = 1 - dice(label_binary.flatten(), label_inverse_affine_warp_looped_binary.flatten())
+                logger.info(f" --  --  -- dice_label_affine_warp_loop overlap (should be between 0.7 - {dice_label_aff_loop:.2f}): {dice_label_inverse_affine_warp_loop:.3f}")
+
+                dice_qc_metrics["label_inverse_warp_affine_loop"] = dice_label_inverse_warp_affine_loop
+                dice_qc_metrics["label_inverse_affine_warp_loop"] = dice_label_inverse_affine_warp_loop
+        else:
+            dice_qc_metrics = {}
+
+
+        # Calculate total jacobian determinant statistics            
+        if compute_jacobian and warp: 
             # generate simpleitk images for the displacement field
             sitk_disp = sitk.GetImageFromArray(sub2ref_mapping.forward.astype(np.float32))
             jacobian_det = sitk.DisplacementFieldJacobianDeterminant(sitk_disp)
-            # vol_change = displacements.jacobian_to_volume_change(jacobian_det)
             vol_change = jacobian_to_volume_change(jacobian_det)
             mean_jacobian = np.mean(vol_change)
             std_jacobian = np.std(vol_change)
@@ -231,9 +237,12 @@ def align_and_resample(mov, ref, label=None, affine_config=None, syn_config=None
                 "std": std_jacobian,
                 "total": total_jacobian
             }
+        else:
+            jacobian_stats = {}
 
-            qc_metrics = {"dice_scores": dice_score, "jacobian_stats": jacobian_stats }
-            
+        qc_metrics = {"dice_qc_metricss": dice_qc_metrics, "jacobian_stats": jacobian_stats }
+        
+                
     else:
         label_inverse = None
 
@@ -359,9 +368,15 @@ atlas_name = config.get("reference_space").get("name")
 
 # registration config
 affine_registration_params = config.get("affine_registration_params")
+syn_registration_params = config.get("diffeomorphic_registration_params")
 
 # diffusion metric config
 diffusion_metrics = config.get("diffusion_metrics")
+
+# qc configs
+qc_types = syn_registration_params.get("qc_types", {})
+compute_dice_qc_metrics = qc_types.get("dice", False)
+compute_jacobian = qc_types.get("jacobian", False)
 
 # setup input / output paths
 pipeline_output_dir = f"{dataset}/derivatives/{preproc_pipeline_name}/{preproc_pipeline_version}/output/"
@@ -460,10 +475,12 @@ sub_affined, sub_warped, label_inverse, sub2ref_affine, sub2ref_mapping, qc_metr
     ref, 
     labs, 
     affine_config=affine_registration_params,
-    syn_config=None, 
+    syn_config=syn_registration_params, 
     sub2ref_affine=sub2ref_affine, 
     sub2ref_mapping=sub2ref_mapping, 
-    warp=warp
+    warp=warp,
+    compute_dice_qc_metrics=compute_dice_qc_metrics,
+    compute_jacobian=compute_jacobian
     )
 
 logger.debug(f"shape of original images: mov: {mov.shape}, ref: {ref.shape}, label: {labs.shape}")
@@ -546,7 +563,7 @@ logger.info(f" --  -- Saved {bids_participant}_{session} IDPs to {outfile}.")
 
 # Save qc_metrics to the dataframe 
 qc_df = pd.DataFrame()
-dice_score = qc_metrics.get("dice_scores", {})
+dice_qc_metrics = qc_metrics.get("dice_qc_metricss", {})
 jacobian_stats = qc_metrics.get("jacobian_stats", {})
 
 qc_df["bids_participant_id"] = [bids_participant]
@@ -555,7 +572,7 @@ qc_df["pipeline"] = [f"{preproc_pipeline_name}-{preproc_pipeline_version}"]
 qc_df["software"] = [preproc_pipeline_software]
 qc_df["registration"] = [reg_method]    
 
-for key, value in dice_score.items():
+for key, value in dice_qc_metrics.items():
     qc_df[f"dice_{key}"] = value
 
 for key, value in jacobian_stats.items():
